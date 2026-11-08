@@ -84,10 +84,11 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/lib.rs",
       "destination": "workers/mb/src/lib.rs",
-      "destination_sha256": "6b51d84f99fa232c0dfa0288eba4f41b14433651010e67bf7b5a2b51e5d40e14",
+      "destination_sha256": "81089ef333502afc85503784262973eb7318b760d360c9a2756712a77e096db6",
       "adaptations": [
         "Replace source resource names with unprovisioned example bucket names; retain environment-boundary assertions.",
-        "Remove source database resource identity from module documentation."
+        "Remove source database resource identity from module documentation.",
+        "Format the longer example-URI assertion as required by first Actions rustfmt output; assertion unchanged."
       ]
     },
     {

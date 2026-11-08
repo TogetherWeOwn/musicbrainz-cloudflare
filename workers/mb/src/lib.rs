@@ -3537,7 +3537,10 @@ mod tests {
         assert!(!url.contains(ART_BUCKET_PROD), "{url}");
         // Leading slashes do not produce an empty path segment.
         let slashed = caa_url_for_art(ART_BUCKET_PROD, "/art/ab/cd/key-250");
-        assert_eq!(slashed, "r2://musicbrainz-example-art-prod/art/ab/cd/key-250");
+        assert_eq!(
+            slashed,
+            "r2://musicbrainz-example-art-prod/art/ab/cd/key-250"
+        );
     }
 
     #[test]
