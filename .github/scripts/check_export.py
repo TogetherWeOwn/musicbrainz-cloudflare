@@ -52,7 +52,12 @@ def provenance_errors(root, manifest):
 
 def config_errors(config):
     errors = []
+    allowed = {"name", "main", "compatibility_date", "workers_dev", "preview_urls",
+               "vars", "hyperdrive", "kv_namespaces", "r2_buckets"}
     for name, section in [("default", config), *config.get("env", {}).items()]:
+        allowed_section = allowed | {"env"} if section is config else allowed
+        for key in section.keys() - allowed_section:
+            errors.append(f"{name}: unapproved configuration key: {key}")
         if section.get("workers_dev") is not False:
             errors.append(f"{name}: workers.dev must be disabled")
         if section.get("preview_urls") is not False:

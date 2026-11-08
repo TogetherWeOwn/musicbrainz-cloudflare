@@ -57,6 +57,22 @@ class ExportGuardTests(unittest.TestCase):
             source.write_bytes(b"unrecorded documentation edit")
             self.assertTrue(guard.provenance_errors(root, manifest))
 
+    def test_config_rejects_unapproved_bindings(self):
+        safe = {"workers_dev": False, "preview_urls": False,
+                "kv_namespaces": [{"binding": "MB_CACHE", "id": "UNCONFIGURED"}]}
+        self.assertEqual(guard.config_errors(safe), [])
+        for key, binding in [
+            ("d1_databases", [{"binding": "DB", "database_id": "1" * 32}]),
+            ("services", [{"binding": "API", "service": "example-service"}]),
+            ("queues", {"producers": [{"binding": "QUEUE", "queue": "example"}]}),
+            ("durable_objects", {"bindings": [{"name": "STATE", "class_name": "State"}]}),
+        ]:
+            for environment in [False, True]:
+                with self.subTest(key=key, environment=environment):
+                    section = {**safe, key: binding}
+                    config = {**safe, "env": {"staging": section}} if environment else section
+                    self.assertTrue(guard.config_errors(config))
+
     def test_config_rejects_public_surface_and_usable_ids(self):
         safe = {"workers_dev": False, "preview_urls": False,
                 "kv_namespaces": [{"id": "UNCONFIGURED"}]}
