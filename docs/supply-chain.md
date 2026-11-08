@@ -1,11 +1,33 @@
 # Workspace supply-chain review
 
 The initial workspace reuses the pinned worker Cargo.lock verbatim at the
-root. No new Rust dependency/version/checksum is resolved by extraction.
+root. No new registry package/version/checksum is resolved by extraction.
+The later normalization repair adds one direct edge to the already-locked
+`unicode-normalization =0.1.25` with default features disabled; it does not
+update any registry package or checksum.
 All registry package versions and integrity checksums are recorded there;
 the only path dependency is the exported `crates/nntune-logging`.
 No root npm/pnpm/Python install, Docker build or package publication is
 required. The example Wrangler config has no install/build hook.
+
+## Normalization dependency review
+
+Before the direct-edge change, the exact registry artifacts were inspected
+without installation or execution (2026-11-08):
+
+| Package | SHA-256, matching Cargo.lock | Executable build hooks |
+| --- | --- | --- |
+| unicode-normalization 0.1.25 | `5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8` | `build = false`, no build.rs or proc-macro library |
+| tinyvec 1.13.3 | `fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee` | `build = false`, no build.rs or proc-macro library |
+
+The normalization crate exposes NFC iterators and uses tinyvec's `alloc`
+feature, already needed by the locked graph. No new script exemption or
+host install is introduced. Cargo 1.99.1 on the preparation host was only
+queried for version; clean locked fetch/native tests/Wasm qualification
+of the corrected graph remain exact-head GitHub Actions obligations. This
+is artifact/hooks review, not a claim of exhaustive dependency-code audit.
+The direct edge must be reconsidered if normalization is removed or either
+locked package changes; it is not a blanket future-version exception.
 
 ## Controls and residual gaps
 

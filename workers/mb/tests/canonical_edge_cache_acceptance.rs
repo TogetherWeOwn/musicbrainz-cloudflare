@@ -127,6 +127,7 @@ fn edge_hit_keys_its_get_through_the_canonical_url() {
         "edge_hit must key its Cache API get through canonical_edge_url, \
          not the raw request URL; body was:\n{body}"
     );
+    assert!(squashed(&body).contains(".get(canonical_edge_url(&url),false)"));
     assert!(
         squashed(&body).contains("Cache::default().get("),
         "edge_hit must still read the edge Cache API; body was:\n{body}"
@@ -144,6 +145,9 @@ fn serve_keys_its_put_through_the_canonical_url() {
         "serve must key its Cache API put through canonical_edge_url, \
          not the raw request URL; body was:\n{body}"
     );
+    assert!(squashed(&body).contains(".put(canonical_edge_url(&req_url),edge_copy)"));
+    let guard = body.find("if api.cache_ttl.is_some() {").unwrap();
+    assert!(guard < body.find(".put(").unwrap());
     assert!(
         squashed(&body).contains("Cache::default().put("),
         "serve must still write the edge Cache API; body was:\n{body}"

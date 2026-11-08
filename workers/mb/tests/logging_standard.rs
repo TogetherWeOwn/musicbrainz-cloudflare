@@ -98,7 +98,7 @@ impl<'a> JsonParser<'a> {
         while self
             .bytes
             .get(self.pos)
-            .is_some_and(u8::is_ascii_whitespace)
+            .is_some_and(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
         {
             self.pos += 1;
         }
@@ -213,6 +213,9 @@ impl<'a> JsonParser<'a> {
             .bytes
             .get(self.pos..self.pos + 4)
             .ok_or("short unicode escape")?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return Err("invalid unicode escape".into());
+        }
         let text = std::str::from_utf8(digits).map_err(|_| "invalid unicode escape")?;
         let value = u16::from_str_radix(text, 16).map_err(|_| "invalid unicode escape")?;
         self.pos += 4;
@@ -445,7 +448,7 @@ fn is_ipv6_token(candidate: &str) -> bool {
         groups += 1;
     }
     if compressed {
-        (1..=7).contains(&groups)
+        (0..=7).contains(&groups)
     } else if text.contains('.') {
         groups == 8
     } else {
@@ -788,6 +791,7 @@ fn golden_line_has_no_prohibited_keys_or_obvious_secret_values() {
             has_obvious_secret(&bad),
             "did not reject obvious secret value {value}"
         );
+        assert_runtime_privacy_value(value, false);
     }
     assert!(
         !has_obvious_secret_value("task-queued"),
@@ -806,12 +810,14 @@ fn golden_line_has_no_prohibited_keys_or_obvious_secret_values() {
         !has_ipv4_like_value("256.0.2.1"),
         "accepted an invalid IPv4 octet"
     );
-    for value in ["2001:db8::1", "::1", "fe80::1"] {
+    for value in ["2001:db8::1", "::1", "fe80::1", "::", "[::]"] {
         let bad = BTreeMap::from([("host".to_string(), JsonValue::String(value.into()))]);
         assert!(has_ipv6_value(&bad), "did not detect an IPv6 value {value}");
+        assert_runtime_privacy_value(value, false);
     }
     for value in [
         "https://[2001:db8::1]/path",
+        "https://[::]/path",
         "see http://[fe80::1]/docs",
         "connected to 2001:db8::1",
     ] {
@@ -820,6 +826,7 @@ fn golden_line_has_no_prohibited_keys_or_obvious_secret_values() {
             has_ipv6_value(&bad),
             "did not detect an embedded IPv6 host {value}"
         );
+        assert_runtime_privacy_value(value, false);
     }
     for value in ["12:00:00", "task-queued", "v1.2"] {
         assert!(
@@ -838,13 +845,79 @@ fn golden_line_has_no_prohibited_keys_or_obvious_secret_values() {
             has_email_value(&bad),
             "did not detect an email value {value}"
         );
+        assert_runtime_privacy_value(value, false);
     }
     for value in ["task-queued", "not-an-email", "v1.2", "user@host"] {
         assert!(
             !has_email_like_value(value),
             "flagged a benign value as email: {value}"
         );
+        assert_runtime_privacy_value(value, true);
     }
+}
+
+fn assert_runtime_privacy_value(value: &str, allowed: bool) {
+    let fields = std::collections::BTreeMap::from([(
+        "detail".to_string(),
+        serde_json::Value::String(value.to_string()),
+    )]);
+    assert_eq!(
+        nntune_logging::fields_from_json(serde_json::json!({"detail": value})).is_ok(),
+        allowed,
+        "shared validator disagrees with independent privacy oracle",
+    );
+    assert_eq!(
+        nntune_logging::LogRecord::new(
+            nntune_logging::Worker::Mb,
+            nntune_logging::Level::Info,
+            "9f3a4c2e1b5d4f6a8c7e9d0b1a2f4e6c",
+            "mb.lookup.hit",
+            fields,
+            0,
+        )
+        .is_ok(),
+        allowed,
+        "direct constructor disagrees with independent privacy oracle",
+    );
+}
+
+#[test]
+fn parser_rejects_non_json_whitespace_and_signed_unicode_escapes() {
+    let invalid = [
+        "{\u{000c}\"kind\":\"artist\"}",
+        "{\u{000b}\"kind\":\"artist\"}",
+        r#"{"kind":"\u+061rtist"}"#,
+        r#"{"kind":"\u-061rtist"}"#,
+        r#"{"kind":"\uD800\u+061"}"#,
+        r#"{"kind":"\uD800"}"#,
+        r#"{"kind":"\uDC00"}"#,
+    ];
+    let accepted: Vec<_> = invalid
+        .iter()
+        .filter(|input| JsonParser::parse(input).is_ok())
+        .collect();
+    assert!(
+        accepted.is_empty(),
+        "accepted invalid JSON inputs: {accepted:?}"
+    );
+    assert!(JsonParser::parse(" \t\r\n{\"kind\":\"artist\"} \t\r\n").is_ok());
+    let escaped = JsonParser::parse(concat!(
+        r#"{"kind":"\u"#,
+        "0061",
+        r#"\u"#,
+        "D834",
+        r#"\u"#,
+        "DD1E",
+        r#""}"#
+    ))
+    .unwrap();
+    assert_eq!(
+        escaped,
+        JsonValue::Object(BTreeMap::from([(
+            "kind".to_string(),
+            JsonValue::String("a\u{1d11e}".to_string()),
+        )]))
+    );
 }
 
 #[test]

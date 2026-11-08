@@ -31,8 +31,9 @@
 //!     control characters;
 //!   - `type` exactly one of `artist|release|recording`;
 //!   - `limit` absent, unparsable as `u32`, or non-zero (zero is the
-//!     handler's 400; `+10`/` 10` spellings do not parse as `u32` and fall
-//!     back exactly as `search_route` falls back);
+//!     handler's 400; a decoded `+10` parses as `u32`, while a decoded
+//!     ` 10` falls back exactly as `search_route` does. Raw query `+` decodes
+//!     to space; `%2B` preserves the numeric leading plus);
 //!   - `offset` absent, unparsable as `u32`, or at or below 1000
 //!     (`MAX_SEARCH_OFFSET`).
 //!

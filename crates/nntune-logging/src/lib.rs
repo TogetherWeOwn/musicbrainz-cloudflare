@@ -12,7 +12,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
@@ -92,27 +91,28 @@ impl Level {
     }
 }
 
-/// Construction failure. Variants name the offending key or event only:
-/// values are never echoed, so an error path cannot leak what it rejected.
+/// Construction failure. Stable categories never retain rejected input:
+/// neither Display nor Debug can echo a caller's key, event, or value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogError {
     /// `trace_id` is not 32 lowercase hex chars.
     BadTraceId,
-    /// Event name violates the standard (carries the name: event names are
-    /// code-controlled, never caller secrets).
-    BadEvent(String),
+    /// Event name violates the standard.
+    BadEvent,
     /// `fields` JSON is not an object.
     FieldsNotAnObject,
     /// A `fields` value is nested (object/array); only flat primitives log.
-    NestedField(String),
+    NestedField,
     /// A `fields` key names personal data or credentials.
-    BannedField(String),
+    BannedField,
     /// A `fields` string value looks like a credential.
     SecretValue,
     /// A `fields` string value looks like personal data (email shape).
     PiiValue,
     /// A `fields` string value looks like an IP address (v4 or v6).
     IpAddressValue,
+    /// Timestamp is outside the supported four-digit-year Unix domain.
+    BadTimestamp,
     /// Entropy source unavailable for ID generation.
     NoEntropy,
 }
@@ -121,13 +121,14 @@ impl fmt::Display for LogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LogError::BadTraceId => write!(f, "trace_id must be 32 lowercase hex chars"),
-            LogError::BadEvent(event) => write!(f, "invalid event name: {event}"),
+            LogError::BadEvent => write!(f, "invalid event name"),
             LogError::FieldsNotAnObject => write!(f, "fields must be a JSON object"),
-            LogError::NestedField(key) => write!(f, "nested fields value: {key}"),
-            LogError::BannedField(key) => write!(f, "banned fields key: {key}"),
+            LogError::NestedField => write!(f, "nested fields value"),
+            LogError::BannedField => write!(f, "banned fields key"),
             LogError::SecretValue => write!(f, "fields value looks like a credential"),
             LogError::PiiValue => write!(f, "fields value looks like personal data"),
             LogError::IpAddressValue => write!(f, "fields value looks like an IP address"),
+            LogError::BadTimestamp => write!(f, "timestamp outside supported range"),
             LogError::NoEntropy => write!(f, "trace-id randomness unavailable"),
         }
     }
@@ -150,8 +151,14 @@ pub fn is_valid_trace_id(raw: &str) -> bool {
 /// hex chars. `getrandom` with the `js` feature serves Web Crypto on wasm
 /// targets and the OS RNG natively.
 pub fn generate_trace_id() -> Result<String, LogError> {
+    generate_trace_id_with(|bytes| getrandom::getrandom(bytes).map_err(|_| LogError::NoEntropy))
+}
+
+fn generate_trace_id_with(
+    fill: impl FnOnce(&mut [u8]) -> Result<(), LogError>,
+) -> Result<String, LogError> {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes).map_err(|_| LogError::NoEntropy)?;
+    fill(&mut bytes)?;
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(32);
     for byte in bytes {
@@ -163,28 +170,20 @@ pub fn generate_trace_id() -> Result<String, LogError> {
 
 /// Resolve the request trace: accept the inbound `x-trace-id` header value
 /// only when it is a valid 128-bit ID, otherwise generate a fresh one. An
-/// invalid header value is dropped, never trusted or logged.
-#[must_use]
-pub fn resolve_trace_id(header: Option<&str>) -> String {
-    match header {
-        Some(value) if is_valid_trace_id(value) => value.to_string(),
-        _ => generate_trace_id().unwrap_or_else(|_| fallback_trace_id()),
-    }
+/// invalid header value is dropped, never trusted or logged. Entropy failure
+/// is explicit; a process-local counter cannot supply cross-isolate identity.
+pub fn resolve_trace_id(header: Option<&str>) -> Result<String, LogError> {
+    resolve_trace_id_with(header, generate_trace_id)
 }
 
-/// Last-resort ID when the entropy source fails (production targets always
-/// provide entropy; this keeps a handler total instead of panicking the
-/// isolate). Fixed prefix marks the weakness so a flood of `f`-prefixed IDs
-/// in logs points straight at the RNG, not at a caller. A process-local
-/// atomic counter supplies the distinct low bits: unlike wall-clock time it
-/// works on every target (`SystemTime::now` panics on wasm32), and it keeps
-/// IDs distinct inside one isolate. Obviously not random.
-fn fallback_trace_id() -> String {
-    static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let seq = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
-    // 16 fixed chars + 16 hex chars of counter: full 128-bit shape, valid
-    // under `is_valid_trace_id` so downstream propagation never breaks.
-    format!("ffffffffffffffff{seq:016x}")
+fn resolve_trace_id_with(
+    header: Option<&str>,
+    generate: impl FnOnce() -> Result<String, LogError>,
+) -> Result<String, LogError> {
+    match header {
+        Some(value) if is_valid_trace_id(value) => Ok(value.to_string()),
+        _ => generate(),
+    }
 }
 
 /// Explicit marker when the build carried no identity (dev server, preview
@@ -215,9 +214,15 @@ pub fn is_build_sha_known(sha: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+/// Last supported Unix millisecond: `9999-12-31T23:59:59.999Z`.
+pub const MAX_TIMESTAMP_MILLIS: u64 = 253_402_300_799_999;
+
 /// Format unix millis as an RFC 3339 UTC timestamp ending in `Z`, always with
-/// millisecond precision (`2026-10-15T20:00:00.123Z`). Pure civil-date math,
-/// no date library, so it behaves identically on native and wasm targets.
+/// millisecond precision (`2026-10-15T20:00:00.123Z`). Supported inputs are
+/// `0..=MAX_TIMESTAMP_MILLIS` (1970 through 9999); pre-1970 dates cannot be
+/// represented by this unsigned API. Direct out-of-domain calls have no
+/// RFC 3339 output guarantee; [`LogRecord::new`] rejects them before formatting.
+/// Pure civil-date math, identical on native and wasm targets.
 #[must_use]
 pub fn unix_millis_to_rfc3339(millis: u64) -> String {
     let secs = millis / 1_000;
@@ -339,7 +344,24 @@ const BANNED_NAME_PARTS: &[&str] = &[
 /// fragment (`api_key`, `grant_token`, `cookie`, ...).
 #[must_use]
 pub fn is_banned_field_key(key: &str) -> bool {
-    let lower = key.to_ascii_lowercase();
+    let chars: Vec<char> = key.chars().collect();
+    let mut lower = String::with_capacity(key.len());
+    for (i, &ch) in chars.iter().enumerate() {
+        if !ch.is_ascii_alphanumeric() {
+            lower.push('_');
+            continue;
+        }
+        let camel_boundary = ch.is_ascii_uppercase()
+            && i > 0
+            && (chars[i - 1].is_ascii_lowercase()
+                || chars[i - 1].is_ascii_digit()
+                || (chars[i - 1].is_ascii_uppercase()
+                    && chars.get(i + 1).is_some_and(char::is_ascii_lowercase)));
+        if camel_boundary {
+            lower.push('_');
+        }
+        lower.push(ch.to_ascii_lowercase());
+    }
     let has_ip_component = lower
         .split(|c: char| !c.is_ascii_alphanumeric())
         .any(|part| part == "ip" || part == "ipv4" || part == "ipv6")
@@ -358,8 +380,8 @@ pub fn is_banned_field_key(key: &str) -> bool {
 }
 
 const SECRET_VALUE_PREFIXES: &[&str] = &[
-    "bearer ", "token ", "sk-", "sk_live_", "sk_test_", "tok_", "ghp_", "gho_", "ghu_", "xoxb-",
-    "xoxp-",
+    "bearer ", "bearer=", "bearer:", "token ", "token=", "token:", "sk-", "sk_live_", "sk_test_",
+    "tok_", "ghp_", "gho_", "ghu_", "xoxb-", "xoxp-",
 ];
 
 const SECRET_VALUE_MARKERS: &[&str] = &[
@@ -371,59 +393,99 @@ const SECRET_VALUE_MARKERS: &[&str] = &[
     "api_key=",
 ];
 
-/// A string value is rejected when it opens with a known credential prefix
-/// or embeds a `key=value` credential marker. Benign task labels
-/// (`task-queued`) pass.
+/// Known credential prefixes match at token boundaries, not inside task
+/// labels. Assignment markers also retain their original embedded matching.
 #[must_use]
 pub fn looks_like_secret_value(value: &str) -> bool {
-    let lower = value.trim_start().to_ascii_lowercase();
-    SECRET_VALUE_PREFIXES
+    let lower = value.to_ascii_lowercase();
+    SECRET_VALUE_PREFIXES.iter().any(|marker| {
+        lower.match_indices(marker).any(|(i, _)| {
+            i == 0
+                || lower[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        })
+    }) || SECRET_VALUE_MARKERS
         .iter()
-        .any(|marker| lower.starts_with(marker))
-        || SECRET_VALUE_MARKERS
-            .iter()
-            .any(|marker| lower.contains(marker))
+        .any(|marker| lower.contains(marker))
 }
 
-/// A dotted-quad of valid octets (`192.0.2.1`) is treated as an IP address
-/// and rejected; out-of-range quads (`256.0.2.1`) are not IPs.
+fn address_tokens(value: &str) -> impl Iterator<Item = &str> {
+    value.split(|ch: char| {
+        !ch.is_ascii_alphanumeric() && !matches!(ch, '.' | ':' | '[' | ']' | '%' | '_' | '-')
+    })
+}
+
+/// Valid bare or delimited IPv4 addresses and endpoints are rejected;
+/// out-of-range octets are not treated as addresses.
 #[must_use]
 pub fn looks_like_ipv4_value(value: &str) -> bool {
-    let parts: Vec<&str> = value.split('.').collect();
-    parts.len() == 4 && parts.iter().all(|part| part.parse::<u8>().is_ok())
+    address_tokens(value).any(|token| {
+        token.parse::<std::net::Ipv4Addr>().is_ok()
+            || token.parse::<std::net::SocketAddrV4>().is_ok()
+    })
 }
 
-/// An `addr@domain.tld` shape is treated as an email address and rejected.
-/// The bar is deliberately structural (one `@`, non-empty local part, a dot
-/// in the domain): operational field values are IDs, counters, and fixed
-/// labels, so `@` in one is already a smell worth dropping the line for.
+/// Check delimited email-shaped tokens, including multiple addresses and
+/// URL path components. This is a privacy backstop, not a general mail parser.
 #[must_use]
 pub fn looks_like_email_value(value: &str) -> bool {
-    let mut parts = value.split('@');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(local), Some(domain), None) => {
-            !local.is_empty() && !domain.is_empty() && domain.contains('.')
-        }
-        _ => false,
-    }
+    value
+        .split(|ch: char| {
+            !ch.is_ascii_alphanumeric() && !matches!(ch, '@' | '.' | '_' | '-' | '+' | '%')
+        })
+        .any(|token| {
+            let mut parts = token.split('@');
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(local), Some(domain), None) => {
+                    !local.is_empty() && !domain.is_empty() && domain.contains('.')
+                }
+                _ => false,
+            }
+        })
 }
 
-/// A hex-colon IP literal (`::1`, `2001:db8::1`, full 8-group form) is
-/// treated as an IP address and rejected. The charset gate keeps
-/// colon-joined operational refs (`nzb:sha256:…`, `12:00:00`) passing:
-/// they carry non-hex letters or too few groups.
+/// Parse bare, mixed, scoped and bracketed IPv6 candidates, also within URLs
+/// or text. Operational colon labels and clock fragments remain permitted.
 #[must_use]
 pub fn looks_like_ipv6_value(value: &str) -> bool {
-    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') {
-        return false;
-    }
-    value.contains("::") || value.split(':').count() == 8
+    address_tokens(value).any(|token| {
+        let literal = if let Some(bracketed) = token.strip_prefix('[') {
+            let Some((host, suffix)) = bracketed.split_once(']') else {
+                return false;
+            };
+            if !suffix.is_empty()
+                && !suffix
+                    .strip_prefix(':')
+                    .is_some_and(|port| port.parse::<u16>().is_ok())
+            {
+                return false;
+            }
+            host
+        } else {
+            token
+        };
+        let host = if let Some((host, scope)) = literal.split_once('%') {
+            if scope.is_empty()
+                || !scope
+                    .bytes()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'-' | b'.'))
+            {
+                return false;
+            }
+            host
+        } else {
+            literal
+        };
+        host.parse::<std::net::Ipv6Addr>().is_ok()
+    })
 }
 
 fn validate_fields(fields: &BTreeMap<String, Value>) -> Result<(), LogError> {
     for (key, value) in fields {
         if is_banned_field_key(key) {
-            return Err(LogError::BannedField(key.clone()));
+            return Err(LogError::BannedField);
         }
         match value {
             Value::String(text) => {
@@ -439,7 +501,7 @@ fn validate_fields(fields: &BTreeMap<String, Value>) -> Result<(), LogError> {
             }
             Value::Number(_) | Value::Bool(_) | Value::Null => {}
             Value::Array(_) | Value::Object(_) => {
-                return Err(LogError::NestedField(key.clone()));
+                return Err(LogError::NestedField);
             }
         }
     }
@@ -488,9 +550,12 @@ impl LogRecord {
             return Err(LogError::BadTraceId);
         }
         if !is_valid_event_for_worker(worker, event) {
-            return Err(LogError::BadEvent(event.to_string()));
+            return Err(LogError::BadEvent);
         }
         validate_fields(&fields)?;
+        if ts_millis > MAX_TIMESTAMP_MILLIS {
+            return Err(LogError::BadTimestamp);
+        }
         Ok(LogRecord {
             ts: unix_millis_to_rfc3339(ts_millis),
             level,
@@ -582,7 +647,7 @@ mod tests {
 
     #[test]
     fn resolve_keeps_valid_ids_and_regenerates_the_rest() {
-        assert_eq!(resolve_trace_id(Some(TRACE)), TRACE);
+        assert_eq!(resolve_trace_id(Some(TRACE)).unwrap(), TRACE);
         for header in [
             None,
             Some(""),
@@ -590,7 +655,7 @@ mod tests {
             Some("9F3A4C2E1B5D4F6A8C7E9D0B1A2F4E6C"),
             Some("Bearer abc123"),
         ] {
-            let resolved = resolve_trace_id(header);
+            let resolved = resolve_trace_id(header).unwrap();
             assert!(is_valid_trace_id(&resolved), "bad resolve of {header:?}");
             assert_ne!(resolved.as_str(), header.unwrap_or(""));
         }
@@ -650,6 +715,43 @@ mod tests {
             unix_millis_to_rfc3339(FIXTURE_MILLIS),
             "2026-10-15T20:00:00.123Z"
         );
+    }
+
+    #[test]
+    fn timestamp_domain_is_enforced_before_record_formatting() {
+        assert_eq!(MAX_TIMESTAMP_MILLIS, 253_402_300_799_999);
+        for (millis, expected) in [
+            (0, "1970-01-01T00:00:00.000Z"),
+            (253_402_300_799_999, "9999-12-31T23:59:59.999Z"),
+        ] {
+            assert_eq!(unix_millis_to_rfc3339(millis), expected);
+            let record = LogRecord::new(
+                Worker::Mb,
+                Level::Info,
+                TRACE,
+                "mb.lookup.completed",
+                fields(serde_json::json!({"status_code": 200})),
+                millis,
+            )
+            .unwrap();
+            let line: Value = serde_json::from_str(&record.to_json_line()).unwrap();
+            assert_eq!(line["ts"], expected);
+            assert_eq!(line.as_object().unwrap().len(), 6);
+        }
+        for millis in [253_402_300_800_000, u64::MAX] {
+            let error = LogRecord::new(
+                Worker::Mb,
+                Level::Info,
+                TRACE,
+                "mb.lookup.completed",
+                fields(serde_json::json!({"status_code": 200})),
+                millis,
+            )
+            .unwrap_err();
+            assert_eq!(error, LogError::BadTimestamp);
+            assert!(!error.to_string().contains(&millis.to_string()));
+            assert!(!format!("{error:?}").contains(&millis.to_string()));
+        }
     }
 
     #[test]
@@ -741,7 +843,7 @@ mod tests {
                 ok_fields(),
                 0
             ),
-            Err(LogError::BadEvent("job.queued".to_string()))
+            Err(LogError::BadEvent)
         );
     }
 
@@ -868,6 +970,112 @@ mod tests {
     }
 
     #[test]
+    fn candidate_recognizers_preserve_operational_controls() {
+        for key in [
+            "user.name",
+            "requestBody",
+            "response-body",
+            "apiKey",
+            "clientIP",
+        ] {
+            assert!(is_banned_field_key(key), "accepted sensitive key");
+        }
+        for value in [
+            "prefix Bearer abc123",
+            "token=abc123",
+            "bearer:abc123",
+            "note: ghp_example",
+        ] {
+            assert!(looks_like_secret_value(value), "accepted credential shape");
+        }
+        assert!(looks_like_ipv4_value("192.0.2.1:443"));
+        assert!(looks_like_email_value("alice@example.com, bob@example.com"));
+        assert!(looks_like_email_value(
+            "https://example.org/users/alice@example.com?mode=full"
+        ));
+        for value in [
+            "::",
+            "[::]",
+            "::ffff:192.0.2.1",
+            "https://[2001:db8::1]/path",
+            "fe80::1%eth0",
+            "connected to 2001:db8::1",
+        ] {
+            assert!(looks_like_ipv6_value(value), "accepted IPv6 shape");
+        }
+        for key in ["ship_id", "filename", "namespace", "payment_id", "query_ms"] {
+            assert!(!is_banned_field_key(key), "rejected operational key");
+        }
+        for value in [
+            "task-queued",
+            "bearer-token-count",
+            "tokenizer state",
+            "12:00:00",
+            "nzb:sha256:abc123",
+            "256.0.2.1",
+            "user@host",
+        ] {
+            assert!(!looks_like_secret_value(value));
+            assert!(!looks_like_ipv4_value(value));
+            assert!(!looks_like_ipv6_value(value));
+            assert!(!looks_like_email_value(value));
+        }
+    }
+
+    #[test]
+    fn shared_validator_and_direct_constructor_enforce_privacy() {
+        let check = |value: serde_json::Value, allowed: bool| {
+            let raw: BTreeMap<String, Value> =
+                value.as_object().unwrap().clone().into_iter().collect();
+            assert_eq!(fields_from_json(value).is_ok(), allowed);
+            assert_eq!(
+                LogRecord::new(Worker::Mb, Level::Info, TRACE, "mb.lookup.hit", raw, 0).is_ok(),
+                allowed
+            );
+        };
+        for key in [
+            "user.name",
+            "requestBody",
+            "clientIP",
+            "password",
+            "contact_email",
+        ] {
+            check(serde_json::json!({key: "safe"}), false);
+        }
+        for value in [
+            "Bearer abc123",
+            "prefix Bearer abc123",
+            "token=abc123",
+            "bearer:abc123",
+            "192.0.2.1",
+            "192.0.2.1:443",
+            "alice@example.com, bob@example.com",
+            "::",
+            "[::]",
+            "::ffff:192.0.2.1",
+            "https://[2001:db8::1]/path",
+            "fe80::1%eth0",
+        ] {
+            check(serde_json::json!({"detail": value}), false);
+        }
+        for value in [
+            "task-queued",
+            "bearer-token-count",
+            "tokenizer state",
+            "12:00:00",
+            "256.0.2.1",
+            "user@host",
+        ] {
+            check(serde_json::json!({"detail": value}), true);
+        }
+        for key in ["ship_id", "filename", "namespace", "payment_id", "query_ms"] {
+            check(serde_json::json!({key: "safe"}), true);
+        }
+        check(serde_json::json!({"detail": []}), false);
+        check(serde_json::json!({"detail": {"count": 1}}), false);
+    }
+
+    #[test]
     fn worker_and_level_names_roundtrip() {
         for (worker, name) in [
             (Worker::Api, "api"),
@@ -893,26 +1101,60 @@ mod tests {
 
     #[test]
     fn error_display_never_echoes_values() {
-        // Keys are schema names (safe to name); values must not appear.
         let err = LogError::SecretValue;
         assert!(!err.to_string().contains("hunter2"));
-        assert!(LogError::BannedField("password".to_string())
+        assert!(LogError::BannedField
             .to_string()
-            .contains("password"));
+            .contains("banned fields key"));
+        for sentinel in ["hunter2", "hunter2\n\t\r\u{001b}"] {
+            let banned = fields_from_json(serde_json::json!({format!("password={sentinel}"): 1}))
+                .unwrap_err();
+            let nested = fields_from_json(serde_json::json!({format!("detail={sentinel}"): []}))
+                .unwrap_err();
+            let event = LogRecord::new(
+                Worker::Mb,
+                Level::Info,
+                TRACE,
+                &format!("Bearer {sentinel}"),
+                BTreeMap::new(),
+                0,
+            )
+            .unwrap_err();
+            assert_eq!(banned, LogError::BannedField);
+            assert_eq!(nested, LogError::NestedField);
+            assert_eq!(event, LogError::BadEvent);
+            for error in [banned, nested, event] {
+                for rendered in [error.to_string(), format!("{error:?}")] {
+                    assert!(!rendered.contains("hunter2"));
+                    assert!(!rendered.chars().any(char::is_control));
+                }
+            }
+        }
     }
 
     #[test]
-    fn entropy_fallback_trace_ids_stay_valid_distinct_and_marked() {
-        let first = fallback_trace_id();
-        let second = fallback_trace_id();
-        for id in [&first, &second] {
-            assert!(
-                id.starts_with("ffffffffffffffff"),
-                "fallback id must carry the f-prefix: {id}"
-            );
-            assert!(is_valid_trace_id(id), "fallback id must stay valid: {id}");
+    fn entropy_failure_never_fabricates_trace_ids() {
+        // Independent fresh generators fail identically, without minting
+        // accepted equal IDs from reset process-local counters.
+        for _ in 0..2 {
+            for header in [None, Some("short"), Some("Bearer abc123")] {
+                let result = resolve_trace_id_with(header, || {
+                    generate_trace_id_with(|_| Err(LogError::NoEntropy))
+                });
+                assert_eq!(result, Err(LogError::NoEntropy));
+            }
         }
-        assert_ne!(first, second, "fallback ids must be distinct across calls");
+        assert_eq!(
+            resolve_trace_id_with(Some(TRACE), || panic!("valid inbound ID needs no entropy")),
+            Ok(TRACE.to_string())
+        );
+        let id = generate_trace_id_with(|bytes| {
+            bytes.fill(0xab);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(id, "abababababababababababababababab");
+        assert!(is_valid_trace_id(&id));
     }
 
     #[test]

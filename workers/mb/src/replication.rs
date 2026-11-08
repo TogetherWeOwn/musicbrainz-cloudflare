@@ -63,9 +63,10 @@ impl PacketLedger {
     /// Callers must satisfy the durable schema's constraints (migration
     /// 0017): `sequence >= 0`, `applied_at >= published_at`, and `packet_id`
     /// unique across sequences. This in-memory model does not re-validate
-    /// them; in particular clock skew (`applied_at < published_at`) clamps
-    /// `lag_secs` to 0 here while the applier's insert is rejected by the
-    /// SQL `CHECK`, so pre-validate before recording.
+    /// them; in particular clock skew (`applied_at < published_at`) can yield
+    /// negative `lag_secs` here: signed saturating subtraction prevents
+    /// overflow, not negative differences. The applier's SQL `CHECK` rejects
+    /// this ordering, so pre-validate before recording.
     ///
     /// A re-record with a different `packet_id` than the one already stored
     /// for `sequence` is rejected: the original record is left untouched,
@@ -223,7 +224,7 @@ impl ReplicationSloProbe {
             });
         }
         for record in &records {
-            if record.lag_secs > self.slo_secs {
+            if record.sequence <= latest_sequence && record.lag_secs > self.slo_secs {
                 breaches.push(ReplicationBreach {
                     kind: "lag_exceeded",
                     sequence: Some(record.sequence),
@@ -247,6 +248,25 @@ impl ReplicationSloProbe {
             // bounded by the record + pending counts plus the
             // reported-breaches cap, never by a caller-supplied cursor span.
             let mut reported_missing = 0usize;
+            // Known publications before the first applied packet are evidence
+            // of pending work, but imply no unknown intervening baseline.
+            for packet in pending
+                .iter()
+                .filter(|p| p.sequence < records[0].sequence && p.sequence <= latest_sequence)
+            {
+                let age = now.saturating_sub(packet.published_at);
+                if age > self.slo_secs {
+                    push_missing(
+                        packet.sequence,
+                        Some(age),
+                        &mut breaches,
+                        &mut reported_missing,
+                        &mut truncated,
+                    );
+                } else {
+                    pending_count += 1;
+                }
+            }
             let mut report_gap = |start: i64,
                                   end: i64,
                                   breaches: &mut Vec<ReplicationBreach>,
@@ -288,20 +308,26 @@ impl ReplicationSloProbe {
                     enumerate_unknown(cursor, end, breaches, &mut reported_missing, &mut truncated);
                 }
             };
-            let mut expected = records[0].sequence;
+            let mut expected = Some(records[0].sequence);
             for record in &records {
-                if record.sequence > expected {
+                let Some(next) = expected else {
+                    break;
+                };
+                if record.sequence > next {
                     // Clip to latest_sequence: sequences past the reported
                     // latest are not yet missing.
                     let gap_end = (record.sequence - 1).min(latest_sequence);
-                    if gap_end >= expected {
-                        report_gap(expected, gap_end, &mut breaches, &mut pending_count);
+                    if gap_end >= next {
+                        report_gap(next, gap_end, &mut breaches, &mut pending_count);
                     }
                 }
-                expected = record.sequence.saturating_add(1);
+                // None means the domain is exhausted, not another MAX slot.
+                expected = record.sequence.checked_add(1);
             }
-            if latest_sequence >= expected {
-                report_gap(expected, latest_sequence, &mut breaches, &mut pending_count);
+            if let Some(next) = expected {
+                if latest_sequence >= next {
+                    report_gap(next, latest_sequence, &mut breaches, &mut pending_count);
+                }
             }
             if truncated {
                 breaches.push(ReplicationBreach {
@@ -491,6 +517,102 @@ mod tests {
         ledger.record(9, 0, 0);
         let report = ReplicationSloProbe::default().evaluate(&ledger, 7, 0);
         assert_eq!(report.breach_count, 0);
+    }
+
+    #[test]
+    fn applied_lag_beyond_latest_is_excluded_until_that_sequence() {
+        let mut ledger = PacketLedger::default();
+        ledger.record(7, 0, 0);
+        ledger.record(8, 0, 0);
+        ledger.record(9, 0, REPLICATION_LAG_SLO_SECS + 1);
+        let probe = ReplicationSloProbe::default();
+        let before = probe.evaluate(&ledger, 7, 0);
+        assert!(before.breaches.is_empty());
+        assert_eq!(before.breach_count, 0);
+        let included = probe.evaluate(&ledger, 9, 0);
+        assert_eq!(included.breach_count, 1);
+        assert_eq!(included.breaches[0].kind, "lag_exceeded");
+        assert_eq!(included.breaches[0].sequence, Some(9));
+        assert_eq!(
+            included.breaches[0].lag_secs,
+            Some(REPLICATION_LAG_SLO_SECS + 1)
+        );
+        for (report, count) in [(&before, 0), (&included, 1)] {
+            assert_eq!(report.breach_count, report.breaches.len());
+            assert_eq!(report.pending_count, 0);
+            let event: serde_json::Value = serde_json::from_str(&report.structured_log).unwrap();
+            assert_eq!(event["breach_count"], count);
+            assert_eq!(event["logged_breach_count"], count);
+            assert_eq!(event["missing_count"], 0);
+            assert_eq!(event["pending_count"], 0);
+            assert_eq!(event["truncated"], false);
+        }
+    }
+
+    #[test]
+    fn known_pending_before_first_applied_is_evaluated_without_inventing_a_baseline() {
+        let mut ledger = PacketLedger::default();
+        ledger.record_published(10, 0);
+        ledger.record_published(20, 0);
+        ledger.record(21, 0, 0);
+        let probe = ReplicationSloProbe::default();
+        let in_budget = probe.evaluate(&ledger, 21, REPLICATION_LAG_SLO_SECS);
+        assert!(in_budget.breaches.is_empty());
+        assert_eq!(in_budget.pending_count, 2);
+        let overdue = probe.evaluate(&ledger, 21, REPLICATION_LAG_SLO_SECS + 1);
+        assert_eq!(overdue.breach_count, 2);
+        assert_eq!(overdue.pending_count, 0);
+        assert_eq!(
+            overdue
+                .breaches
+                .iter()
+                .map(|b| b.sequence)
+                .collect::<Vec<_>>(),
+            vec![Some(10), Some(20)]
+        );
+        assert!(overdue
+            .breaches
+            .iter()
+            .all(|b| b.kind == "missing_sequence"
+                && b.lag_secs == Some(REPLICATION_LAG_SLO_SECS + 1)));
+        let event: serde_json::Value = serde_json::from_str(&overdue.structured_log).unwrap();
+        assert_eq!(event["breach_count"], 2);
+        assert_eq!(event["missing_count"], 2);
+        assert_eq!(event["pending_count"], 0);
+        assert_eq!(event["logged_breach_count"], 2);
+        assert_eq!(event["truncated"], false);
+        let before_pending = probe.evaluate(&ledger, 9, REPLICATION_LAG_SLO_SECS + 1);
+        assert_eq!(before_pending.breach_count, 0);
+        assert_eq!(before_pending.pending_count, 0);
+        for (report, count, pending) in [
+            (&in_budget, 0, 2),
+            (&overdue, 2, 0),
+            (&before_pending, 0, 0),
+        ] {
+            assert_eq!(report.breach_count, report.breaches.len());
+            let event: serde_json::Value = serde_json::from_str(&report.structured_log).unwrap();
+            assert_eq!(event["breach_count"], count);
+            assert_eq!(event["logged_breach_count"], count);
+            assert_eq!(event["missing_count"], count);
+            assert_eq!(event["pending_count"], pending);
+            assert_eq!(event["truncated"], false);
+        }
+        // A single known earlier pending packet counts once at the exact
+        // budget, then produces one aged breach, not an invented 20-slot gap.
+        let mut single = PacketLedger::default();
+        single.record_published(20, 0);
+        single.record(21, 0, 0);
+        let boundary = probe.evaluate(&single, 21, REPLICATION_LAG_SLO_SECS);
+        assert_eq!(boundary.pending_count, 1);
+        assert!(boundary.breaches.is_empty());
+        let aged = probe.evaluate(&single, 21, REPLICATION_LAG_SLO_SECS + 1);
+        assert_eq!(aged.pending_count, 0);
+        assert_eq!(aged.breach_count, 1);
+        assert_eq!(aged.breaches[0].sequence, Some(20));
+        assert_eq!(
+            aged.breaches[0].lag_secs,
+            Some(REPLICATION_LAG_SLO_SECS + 1)
+        );
     }
 
     #[test]

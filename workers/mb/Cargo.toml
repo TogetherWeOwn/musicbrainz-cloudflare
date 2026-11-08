@@ -28,6 +28,8 @@ nntune-logging = { version = "0.1.0", path = "../../crates/nntune-logging" }
 # registry; neither has a build script.
 miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# Canonical search-key normalization; reuse the exact locked pure-Rust package.
+unicode-normalization = { version = "=0.1.25", default-features = false }
 
 # Native deadline for `with_db_deadline` (wasm uses `worker::Delay`);
 # the api worker gates the same dependency the same way.

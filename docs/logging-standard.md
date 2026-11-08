@@ -7,14 +7,25 @@ The extracted emitter contract is implemented in
 workers are exported or deployed.
 
 Records contain `ts`, `level`, `worker`, `trace_id`, `event` and `fields`.
-The emitter also renders the normalized `build_sha` field: exactly 40
-lowercase hexadecimal characters, or `unknown` for absent/invalid input.
-The timestamp is caller-supplied Unix milliseconds, formatted as UTC.
+The MB runtime normalizes `fields.build_sha` before construction: exactly
+40 lowercase hexadecimal characters, or `unknown` for absent/invalid input.
+The generic `LogRecord` constructor validates fields but does not add or
+normalize build identity; callers use `parse_build_sha` for that obligation.
+The timestamp is caller-supplied unsigned Unix milliseconds, formatted as
+UTC with millisecond precision. `LogRecord::new` accepts only
+`0..=253402300799999` (1970-01-01 through 9999-12-31 inclusive) and returns
+a non-sensitive error above that domain, without clamping or wrapping.
+The direct `unix_millis_to_rfc3339(u64) -> String` helper has the same
+supported domain but no error channel; out-of-domain RFC3339 output is not
+promised, and pre-1970 dates cannot be represented by the unsigned API.
 Levels are debug/info/warn/error. Fields are flat primitives, never nested
 request or response bodies.
 
 `x-trace-id` propagation accepts only 32 lowercase hex characters. An
-absent or invalid inbound value is replaced, not logged. Valid IDs survive
+absent or invalid inbound value is replaced with a random ID, not logged.
+If randomness is unavailable, trace resolution returns an explicit error;
+MB responds with a fixed 503 before cache/repository work, without inventing
+or echoing a trace. Valid inbound IDs do not require randomness and survive
 response and repository-failure paths. Build identity is not authorization.
 
 Validate secrets and personal data at construction. Credential-shaped

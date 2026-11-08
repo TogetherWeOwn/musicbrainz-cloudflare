@@ -10,7 +10,7 @@
 //! Snapshot objects under one prefix (`snap/<dump>/`):
 //! - `<kind>.idx`: [`BUCKETS`] fixed entries of [`IDX_ENTRY_LEN`] bytes,
 //!   little-endian `(part u32, len u32, offset u64)`; `len == 0` is an empty
-//!   bucket. Cached per isolate after the first read.
+//!   bucket. Cached within one immutable repository after the first read.
 //! - `<kind>.dat.<part>`: concatenated raw-DEFLATE blocks, one per bucket.
 //!   A block inflates to `key\tvalue\n` lines sorted by key. Parts stay
 //!   under the single-request upload limit.
@@ -23,11 +23,13 @@
 //! parallel round of range reads with no per-hit fetch.
 
 use crate::{Artist, Entity, Kind, MbRepo, Recording, Release, RepoError, RepoStage, SearchHit};
+use serde::de::{DeserializeSeed, IgnoredAny, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::OnceLock;
+use unicode_normalization::UnicodeNormalization;
 
 /// Buckets per kind: the first four hex digits of an MBID.
 pub const BUCKETS: usize = 65_536;
@@ -38,6 +40,13 @@ pub const IDX_LEN: usize = BUCKETS * IDX_ENTRY_LEN;
 /// Inflated block cap: a corrupt or hostile block cannot exhaust isolate
 /// memory. The builder refuses to write a block above it.
 pub const MAX_SNAPSHOT_BLOCK_BYTES: usize = 8 << 20;
+/// Conservative compressed cap for the pinned level-6 miniz encoder. Its
+/// static/stored fallback prevents sustained expansion beyond two bytes per
+/// input byte; allow additional block headers and final padding. This is not
+/// the inflated cap: incompressible DEFLATE can exceed the plaintext length.
+pub const MAX_COMPRESSED_BLOCK_BYTES: usize = 2 * MAX_SNAPSHOT_BLOCK_BYTES + 1024;
+/// Repository-local FIFO cache: at most two fixed-size indexes (2 MiB).
+pub const MAX_CACHED_INDEXES: usize = 2;
 /// `pg_trgm.similarity_threshold` default: the `%` predicate's floor.
 pub const SEARCH_MIN_SCORE: f32 = 0.3;
 /// Word keys fetched per search, longest words first (longer words are
@@ -107,8 +116,12 @@ pub fn encode_idx_entry(block: BlockRef) -> [u8; IDX_ENTRY_LEN] {
 
 /// The bucket's block, or `None` for an empty bucket or a short index.
 pub fn idx_entry(idx: &[u8], bucket: usize) -> Option<BlockRef> {
+    if bucket >= BUCKETS {
+        return None;
+    }
     let start = bucket.checked_mul(IDX_ENTRY_LEN)?;
-    let entry = idx.get(start..start + IDX_ENTRY_LEN)?;
+    let end = start.checked_add(IDX_ENTRY_LEN)?;
+    let entry = idx.get(start..end)?;
     let word = |range: std::ops::Range<usize>| -> [u8; 4] {
         entry[range].try_into().expect("4-byte slice")
     };
@@ -157,12 +170,12 @@ fn fold_map() -> &'static HashMap<char, &'static str> {
     })
 }
 
-/// Lowercase, then fold diacritics to their base letters in every script
-/// (`snapshot_fold.tsv`).
+/// Lowercase, canonically compose (NFC), then fold diacritics using
+/// `snapshot_fold.tsv`. Equivalent combining sequences share index keys.
 pub fn fold(text: &str) -> String {
     let map = fold_map();
     let mut out = String::with_capacity(text.len());
-    for ch in text.chars().flat_map(char::to_lowercase) {
+    for ch in text.to_lowercase().nfc() {
         match map.get(&ch) {
             Some(ascii) => out.push_str(ascii),
             None => out.push(ch),
@@ -227,7 +240,8 @@ pub fn trigrams(text: &str) -> Vec<[char; 3]> {
 /// the set Postgres itself scores. Breaks ties between titles that fold
 /// to the same words, so an exact accented match outranks its ASCII twin.
 pub fn exact_trigrams(text: &str) -> Vec<[char; 3]> {
-    word_trigrams(split_words(&text.to_lowercase()))
+    let normalized: String = text.to_lowercase().nfc().collect();
+    word_trigrams(split_words(&normalized))
 }
 
 fn word_trigrams(words: Vec<String>) -> Vec<[char; 3]> {
@@ -277,8 +291,8 @@ pub type LabelKey = (String, String, Vec<bool>, String);
 /// uppercase. The raw label last keeps the order total. Byte order would
 /// put every uppercase title before its lowercase twin.
 pub fn label_sort_key(label: &str) -> LabelKey {
-    let alnum: Vec<char> = label.chars().filter(|ch| ch.is_alphanumeric()).collect();
-    let lower: String = alnum.iter().flat_map(|ch| ch.to_lowercase()).collect();
+    let alnum: Vec<char> = label.nfc().filter(|ch| ch.is_alphanumeric()).collect();
+    let lower = alnum.iter().collect::<String>().to_lowercase();
     (
         fold(&lower),
         lower,
@@ -296,6 +310,80 @@ pub struct Posting(
     pub Option<String>,
 );
 
+fn canonical_mbid(mbid: &str) -> Option<String> {
+    crate::is_valid_mbid(mbid).then(|| mbid.to_ascii_lowercase())
+}
+
+fn canonical_related(mbid: Option<String>) -> Option<Option<String>> {
+    match mbid {
+        Some(mbid) => canonical_mbid(&mbid).map(Some),
+        None => Some(None),
+    }
+}
+
+fn canonical_posting(mut posting: Posting) -> Option<Posting> {
+    posting.0 = canonical_mbid(&posting.0)?;
+    posting.2 = canonical_related(posting.2)?;
+    Some(posting)
+}
+
+struct PostingListSeed {
+    cap: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for PostingListSeed {
+    type Value = Vec<Posting>;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for PostingListSeed {
+    type Value = Vec<Posting>;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a bounded list of release postings")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut postings = Vec::new();
+        while postings.len() < self.cap {
+            let Some(posting) = seq.next_element::<Posting>()? else {
+                return Ok(postings);
+            };
+            postings.push(canonical_posting(posting).ok_or_else(|| {
+                <A::Error as serde::de::Error>::custom("invalid posting identifier")
+            })?);
+        }
+        // Never allocate/retain the over-cap posting, even when it repeats
+        // an existing ID. Deduplication is a later ranking operation.
+        if seq.next_element::<IgnoredAny>()?.is_some() {
+            return Err(serde::de::Error::custom("posting limit exceeded"));
+        }
+        Ok(postings)
+    }
+}
+
+fn decode_postings(key: &str, value: &str) -> Result<Vec<Posting>, RepoError> {
+    let cap = if key.starts_with("t:") {
+        MAX_TITLE_POSTINGS
+    } else if key.starts_with("w:") {
+        MAX_WORD_POSTINGS
+    } else {
+        return Err(decode_failed());
+    };
+    let mut deserializer = serde_json::Deserializer::from_str(value);
+    let postings = PostingListSeed { cap }
+        .deserialize(&mut deserializer)
+        .map_err(|_| decode_failed())?;
+    deserializer.end().map_err(|_| decode_failed())?;
+    Ok(postings)
+}
+
 /// Score, filter and page postings the way the Postgres release search
 /// orders rows: similarity desc, then title asc ([`label_sort_key`]), then
 /// MBID asc, with the `%` floor ([`SEARCH_MIN_SCORE`]). The folded score
@@ -307,7 +395,13 @@ pub fn rank_postings(
     postings: impl IntoIterator<Item = Posting>,
     limit: u32,
     offset: u32,
-) -> Vec<SearchHit> {
+) -> Result<Vec<SearchHit>, RepoError> {
+    // Reject a corrupt list as a whole, before sorting or pagination can
+    // conceal a bad identifier in a later page or a below-threshold row.
+    let postings: Vec<Posting> = postings
+        .into_iter()
+        .map(|posting| canonical_posting(posting).ok_or_else(decode_failed))
+        .collect::<Result<_, _>>()?;
     let query = trigrams(normalized_q);
     let exact_query = exact_trigrams(normalized_q);
     let mut seen = HashSet::new();
@@ -327,7 +421,7 @@ pub fn rank_postings(
             .then_with(|| ka.cmp(kb))
             .then_with(|| pa.0.cmp(&pb.0))
     });
-    scored
+    Ok(scored
         .into_iter()
         .skip(offset as usize)
         .take(limit as usize)
@@ -340,7 +434,7 @@ pub fn rank_postings(
                 artist_name,
             },
         )
-        .collect()
+        .collect())
 }
 
 // --- Stored row shapes ------------------------------------------------------
@@ -375,7 +469,7 @@ pub struct RecordingRow {
 
 /// Decode one stored lookup value into the served entity.
 pub fn decode_entity(kind: Kind, mbid: &str, value: &str) -> Option<Entity> {
-    let mbid = mbid.to_owned();
+    let mbid = canonical_mbid(mbid)?;
     Some(match kind {
         Kind::Artist => {
             let row: ArtistRow = serde_json::from_str(value).ok()?;
@@ -391,7 +485,7 @@ pub fn decode_entity(kind: Kind, mbid: &str, value: &str) -> Option<Entity> {
             let row: ReleaseRow = serde_json::from_str(value).ok()?;
             Entity::Release(Release {
                 mbid,
-                artist_mbid: row.artist_mbid,
+                artist_mbid: canonical_related(row.artist_mbid)?,
                 title: row.title,
                 release_type: row.release_type,
                 year: row.year,
@@ -402,7 +496,7 @@ pub fn decode_entity(kind: Kind, mbid: &str, value: &str) -> Option<Entity> {
             let row: RecordingRow = serde_json::from_str(value).ok()?;
             Entity::Recording(Recording {
                 mbid,
-                release_mbid: row.release_mbid,
+                release_mbid: canonical_related(row.release_mbid)?,
                 title: row.title,
                 track_no: row.track_no,
                 duration_ms: row.duration_ms,
@@ -414,12 +508,20 @@ pub fn decode_entity(kind: Kind, mbid: &str, value: &str) -> Option<Entity> {
 
 // --- Repository ---------------------------------------------------------------
 
-/// Byte-range object reads: R2 in the Worker, files in the native tools.
+/// Immutable byte-range object reads: R2 in the Worker, files in native tools.
+/// Implementations must reject wrong metadata before buffering, bound retained
+/// bodies while reading, and never change objects during a repository's life.
 #[allow(async_fn_in_trait)]
 pub trait RangeSource {
-    /// The whole object; `None` when it does not exist.
-    async fn read_all(&self, key: &str) -> Result<Option<Vec<u8>>, RepoError>;
+    /// Exactly `expected_len` bytes; `None` when the object does not exist.
+    /// Reject a different object size before consuming its body.
+    async fn read_all_exact(
+        &self,
+        key: &str,
+        expected_len: usize,
+    ) -> Result<Option<Vec<u8>>, RepoError>;
     /// `len` bytes at `offset`; `None` when the object does not exist.
+    /// Bound the response body before materialization, not only afterwards.
     async fn read_range(
         &self,
         key: &str,
@@ -428,34 +530,81 @@ pub trait RangeSource {
     ) -> Result<Option<Vec<u8>>, RepoError>;
 }
 
-thread_local! {
-    /// Per-isolate index cache keyed by object name, so a new snapshot
-    /// prefix never reads a stale index.
-    static IDX_CACHE: RefCell<HashMap<String, Rc<Vec<u8>>>> = RefCell::new(HashMap::new());
+/// Check metadata before opening a body, then retain no more than the
+/// promised length even if metadata and streamed bytes disagree.
+async fn read_sized_body<S, E>(
+    size: u64,
+    expected_len: usize,
+    open_body: impl FnOnce() -> Result<S, RepoError>,
+) -> Result<Vec<u8>, RepoError>
+where
+    S: futures_util::Stream<Item = Result<Vec<u8>, E>>,
+{
+    use futures_util::StreamExt;
+    if size != expected_len as u64 {
+        return Err(decode_failed());
+    }
+    let stream = open_body()?;
+    futures_util::pin_mut!(stream);
+    let mut bytes = Vec::with_capacity(expected_len);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| query_failed())?;
+        if chunk.len() > expected_len - bytes.len() {
+            return Err(decode_failed());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.len() != expected_len {
+        return Err(decode_failed());
+    }
+    Ok(bytes)
+}
+
+fn checked_block_end(offset: u64, len: u32) -> Result<u64, RepoError> {
+    if len == 0 || len as usize > MAX_COMPRESSED_BLOCK_BYTES {
+        return Err(decode_failed());
+    }
+    offset
+        .checked_add(u64::from(len))
+        .filter(|end| *end <= MAX_PART_BYTES)
+        .ok_or_else(decode_failed)
 }
 
 fn query_failed() -> RepoError {
     RepoError::new(RepoStage::Query)
 }
 
+fn configured_prefix<E>(prefix: Result<String, E>) -> Result<String, RepoError> {
+    let prefix = prefix.map_err(|_| query_failed())?;
+    if prefix.trim().is_empty() {
+        return Err(query_failed());
+    }
+    Ok(prefix)
+}
+
 fn decode_failed() -> RepoError {
     RepoError::new(RepoStage::Decode)
 }
 
-/// [`MbRepo`] over one snapshot prefix.
+/// [`MbRepo`] over one immutable source and nonempty snapshot prefix.
+/// Index reuse is bounded and repository-local; no global store identity or
+/// stale cross-store entry survives dropping this repository.
 pub struct SnapshotRepo<S> {
-    pub source: S,
-    pub prefix: String,
+    source: S,
+    prefix: String,
+    indexes: RefCell<VecDeque<(String, Rc<Vec<u8>>)>>,
     reads: std::cell::Cell<u32>,
 }
 
 impl<S: RangeSource> SnapshotRepo<S> {
-    pub fn new(source: S, prefix: impl Into<String>) -> Self {
-        SnapshotRepo {
+    pub fn new(source: S, prefix: impl Into<String>) -> Result<Self, RepoError> {
+        let prefix = configured_prefix(Ok::<_, ()>(prefix.into()))?;
+        Ok(SnapshotRepo {
             source,
-            prefix: prefix.into(),
+            prefix,
+            indexes: RefCell::new(VecDeque::new()),
             reads: std::cell::Cell::new(0),
-        }
+        })
     }
 
     /// Object reads issued so far (index loads included).
@@ -465,16 +614,28 @@ impl<S: RangeSource> SnapshotRepo<S> {
 
     async fn index(&self, stem: &str) -> Result<Rc<Vec<u8>>, RepoError> {
         let key = idx_object(&self.prefix, stem);
-        if let Some(hit) = IDX_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
-            return Ok(hit);
+        if let Some((_, hit)) = self.indexes.borrow().iter().find(|(name, _)| name == &key) {
+            return Ok(hit.clone());
         }
         self.reads.set(self.reads.get() + 1);
-        let bytes = self.source.read_all(&key).await?.ok_or_else(query_failed)?;
+        let bytes = self
+            .source
+            .read_all_exact(&key, IDX_LEN)
+            .await?
+            .ok_or_else(query_failed)?;
         if bytes.len() != IDX_LEN {
             return Err(decode_failed());
         }
         let bytes = Rc::new(bytes);
-        IDX_CACHE.with(|cache| cache.borrow_mut().insert(key, bytes.clone()));
+        let mut indexes = self.indexes.borrow_mut();
+        // A concurrent read may already have populated this entry.
+        if let Some((_, hit)) = indexes.iter().find(|(name, _)| name == &key) {
+            return Ok(hit.clone());
+        }
+        if indexes.len() == MAX_CACHED_INDEXES {
+            indexes.pop_front();
+        }
+        indexes.push_back((key, bytes.clone()));
         Ok(bytes)
     }
 
@@ -484,6 +645,7 @@ impl<S: RangeSource> SnapshotRepo<S> {
         let Some(block) = idx_entry(&idx, bucket) else {
             return Ok(None);
         };
+        checked_block_end(block.offset, block.len)?;
         self.reads.set(self.reads.get() + 1);
         let raw = self
             .source
@@ -530,9 +692,7 @@ impl<S: RangeSource> SnapshotRepo<S> {
                 continue;
             };
             if let Some(value) = find_value(block, key) {
-                let list: Vec<Posting> =
-                    serde_json::from_str(value).map_err(|_| decode_failed())?;
-                postings.extend(list);
+                postings.extend(decode_postings(key, value)?);
             }
         }
         Ok(postings)
@@ -541,7 +701,7 @@ impl<S: RangeSource> SnapshotRepo<S> {
 
 impl<S: RangeSource> MbRepo for SnapshotRepo<S> {
     async fn lookup(&self, kind: Kind, mbid: &str) -> Result<Option<Entity>, RepoError> {
-        let mbid = mbid.to_ascii_lowercase();
+        let mbid = canonical_mbid(mbid).ok_or_else(query_failed)?;
         let bucket = mbid_bucket(&mbid).ok_or_else(query_failed)?;
         let Some(block) = self.block(kind_stem(kind), bucket).await? else {
             return Ok(None);
@@ -567,7 +727,7 @@ impl<S: RangeSource> MbRepo for SnapshotRepo<S> {
             return Err(query_failed());
         }
         let postings = self.search_postings(normalized_q).await?;
-        Ok(rank_postings(normalized_q, postings, limit, offset))
+        rank_postings(normalized_q, postings, limit, offset)
     }
 
     async fn release_recordings(
@@ -575,6 +735,29 @@ impl<S: RangeSource> MbRepo for SnapshotRepo<S> {
         _release_mbid: &str,
     ) -> Result<Option<Vec<Recording>>, RepoError> {
         // Out of the spike's scope (lookups plus release search).
+        Err(query_failed())
+    }
+
+    async fn release_group(&self, _mbid: &str) -> Result<Option<crate::ReleaseGroup>, RepoError> {
+        Err(query_failed())
+    }
+
+    async fn group_releases(&self, _mbid: &str) -> Result<Option<Vec<Release>>, RepoError> {
+        Err(query_failed())
+    }
+
+    async fn artist_urls(&self, _mbid: &str) -> Result<Option<Vec<crate::ArtistUrl>>, RepoError> {
+        Err(query_failed())
+    }
+
+    async fn recording_videos(
+        &self,
+        _mbid: &str,
+    ) -> Result<Option<Vec<crate::RecordingVideo>>, RepoError> {
+        Err(query_failed())
+    }
+
+    async fn recording_isrcs(&self, _mbid: &str) -> Result<Option<Vec<String>>, RepoError> {
         Err(query_failed())
     }
 }
@@ -605,7 +788,14 @@ mod worker_entry {
     }
 
     impl RangeSource for R2Source {
-        async fn read_all(&self, key: &str) -> Result<Option<Vec<u8>>, RepoError> {
+        async fn read_all_exact(
+            &self,
+            key: &str,
+            expected_len: usize,
+        ) -> Result<Option<Vec<u8>>, RepoError> {
+            if expected_len != IDX_LEN {
+                return Err(decode_failed());
+            }
             let Some(object) = self
                 .bucket
                 .get(key)
@@ -615,8 +805,15 @@ mod worker_entry {
             else {
                 return Ok(None);
             };
-            let body = object.body().ok_or_else(query_failed)?;
-            body.bytes().await.map(Some).map_err(|_| query_failed())
+            read_sized_body(object.size(), expected_len, || {
+                object
+                    .body()
+                    .ok_or_else(query_failed)?
+                    .stream()
+                    .map_err(|_| query_failed())
+            })
+            .await
+            .map(Some)
         }
 
         async fn read_range(
@@ -625,6 +822,7 @@ mod worker_entry {
             offset: u64,
             len: u32,
         ) -> Result<Option<Vec<u8>>, RepoError> {
+            let end = checked_block_end(offset, len)?;
             let range = worker::Range::OffsetWithLength {
                 offset,
                 length: u64::from(len),
@@ -639,8 +837,25 @@ mod worker_entry {
             else {
                 return Ok(None);
             };
-            let body = object.body().ok_or_else(query_failed)?;
-            body.bytes().await.map(Some).map_err(|_| query_failed())
+            if object.size() > MAX_PART_BYTES || end > object.size() {
+                return Err(decode_failed());
+            }
+            match object.range().map_err(|_| decode_failed())? {
+                worker::Range::OffsetWithLength {
+                    offset: actual_offset,
+                    length,
+                } if actual_offset == offset && length == u64::from(len) => {}
+                _ => return Err(decode_failed()),
+            }
+            read_sized_body(u64::from(len), len as usize, || {
+                object
+                    .body()
+                    .ok_or_else(query_failed)?
+                    .stream()
+                    .map_err(|_| query_failed())
+            })
+            .await
+            .map(Some)
         }
     }
 
@@ -711,13 +926,52 @@ mod worker_entry {
         }
     }
 
+    pub(super) fn spike_path(path: &str) -> &str {
+        path.strip_prefix("/__mb-snap")
+            .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+            .unwrap_or(path)
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum SpikeRoute<'a> {
+        Search,
+        Lookup(Kind, &'a str),
+    }
+
+    pub(super) fn spike_route<'a>(path: &[&'a str]) -> Option<SpikeRoute<'a>> {
+        match path {
+            ["v1", "mb", "search"] => Some(SpikeRoute::Search),
+            ["v1", "mb", kind, mbid] => {
+                Kind::parse(Some((*kind).to_owned())).map(|kind| SpikeRoute::Lookup(kind, mbid))
+            }
+            _ => None,
+        }
+    }
+
     /// Spike router: lookups and release search over the snapshot, with the
     /// same core handlers (validation, envelopes, error bodies) as the
     /// Postgres routes. Paths may carry a leading `/__mb-snap` segment.
     pub async fn spike_fetch(req: Request, env: Env) -> WorkerResult<Response> {
+        use crate::http_layer::{
+            build_sha_from_env, emit, inbound_trace_id, outcome_level, with_trace,
+        };
+        let Ok(trace_id) = inbound_trace_id(&req) else {
+            return Response::error("Service unavailable", 503);
+        };
+        let build_sha = build_sha_from_env(&env);
+        let response = spike_response(req, env).await?;
+        emit(
+            outcome_level(response.status_code()),
+            &trace_id,
+            "mb.snapshot.completed",
+            serde_json::json!({"status_code": response.status_code(), "build_sha": build_sha}),
+        );
+        Ok(with_trace(response, &trace_id))
+    }
+
+    async fn spike_response(req: Request, env: Env) -> WorkerResult<Response> {
         let url = req.url()?;
-        let path = url.path();
-        let path = path.strip_prefix("/__mb-snap").unwrap_or(path);
+        let path = spike_path(url.path());
         if path == "/healthz" && req.method() == worker::Method::Get {
             return plain(200, r#"{"ok":true}"#);
         }
@@ -737,14 +991,46 @@ mod worker_entry {
         if let Some(api) = spike_route_error(req.method(), &segments) {
             return render(api, started, 0);
         }
-        let prefix = env
-            .var(SNAPSHOT_PREFIX_VAR)
-            .map(|v| v.to_string())
-            .unwrap_or_default();
-        let bucket = env.bucket(SNAPSHOT_BINDING)?;
-        let repo = SnapshotRepo::new(R2Source { bucket }, prefix);
-        let api = match segments.as_slice() {
-            ["v1", "mb", "search"] => {
+        // Unknown routes never acquire bindings or depend on snapshot config.
+        let Some(route) = spike_route(&segments) else {
+            return render(
+                crate::error_response(crate::ApiError::not_found("not found")),
+                started,
+                0,
+            );
+        };
+        let prefix = match configured_prefix(env.var(SNAPSHOT_PREFIX_VAR).map(|v| v.to_string())) {
+            Ok(prefix) => prefix,
+            Err(_) => {
+                return render(
+                    crate::error_response(crate::ApiError::internal_error()),
+                    started,
+                    0,
+                )
+            }
+        };
+        let bucket = match env.bucket(SNAPSHOT_BINDING) {
+            Ok(bucket) => bucket,
+            Err(_) => {
+                return render(
+                    crate::error_response(crate::ApiError::internal_error()),
+                    started,
+                    0,
+                )
+            }
+        };
+        let repo = match SnapshotRepo::new(R2Source { bucket }, prefix) {
+            Ok(repo) => repo,
+            Err(_) => {
+                return render(
+                    crate::error_response(crate::ApiError::internal_error()),
+                    started,
+                    0,
+                )
+            }
+        };
+        let api = match route {
+            SpikeRoute::Search => {
                 let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
                 let limit = query.get("limit").and_then(|v| v.parse::<u32>().ok());
                 let offset = query.get("offset").and_then(|v| v.parse::<u32>().ok());
@@ -759,21 +1045,7 @@ mod worker_entry {
                 )
                 .await
             }
-            ["v1", "mb", kind, mbid] => match Kind::parse(Some((*kind).to_owned())) {
-                Some(kind) => handle_lookup(&repo, &NoCache, kind, mbid).await,
-                None => {
-                    return plain(
-                        404,
-                        r#"{"code":"not_found","message":"not found","retryable":false}"#,
-                    )
-                }
-            },
-            _ => {
-                return plain(
-                    404,
-                    r#"{"code":"not_found","message":"not found","retryable":false}"#,
-                )
-            }
+            SpikeRoute::Lookup(kind, mbid) => handle_lookup(&repo, &NoCache, kind, mbid).await,
         };
         render(api, started, repo.reads())
     }
@@ -833,6 +1105,71 @@ mod tests {
         assert!(spike_route_error(Method::Get, &["v1", "mb", "artist", "id", "unknown"]).is_none());
     }
 
+    #[test]
+    fn spike_paths_require_a_prefix_segment_and_classify_before_bindings() {
+        use worker_entry::{spike_path, spike_route, SpikeRoute};
+        for prefix in ["", "/__mb-snap"] {
+            let search = format!("{prefix}/v1/mb/search");
+            let segments: Vec<_> = spike_path(&search).trim_matches('/').split('/').collect();
+            assert_eq!(spike_route(&segments), Some(SpikeRoute::Search));
+            let lookup = format!("{prefix}/v1/mb/artist/id");
+            let segments: Vec<_> = spike_path(&lookup).trim_matches('/').split('/').collect();
+            assert_eq!(
+                spike_route(&segments),
+                Some(SpikeRoute::Lookup(Kind::Artist, "id"))
+            );
+            assert_eq!(spike_path(&format!("{prefix}/healthz")), "/healthz");
+        }
+        for path in [
+            "/__mb-snapv1/mb/search",
+            "/__mb-snap-other/v1/mb/artist/id",
+            "/v1/mb/unknown/id",
+            "/unknown",
+        ] {
+            let segments: Vec<_> = spike_path(path).trim_matches('/').split('/').collect();
+            assert_eq!(spike_route(&segments), None, "{path}");
+        }
+        let source = include_str!("snapshot.rs");
+        let router = source.split_once("pub async fn spike_fetch(").unwrap().1;
+        let classified = router.find("let Some(route) = spike_route(").unwrap();
+        assert!(classified < router.find("configured_prefix(env.var(").unwrap());
+        assert!(classified < router.find("env.bucket(").unwrap());
+        assert!(router.contains("Err(_) => {\n                return render("));
+        assert!(!router.contains("env.bucket(SNAPSHOT_BINDING)?"));
+    }
+
+    #[test]
+    fn unsupported_snapshot_methods_fail_without_store_reads() {
+        let repo = SnapshotRepo::new(MemSource::default(), "snap/unsupported/".into()).unwrap();
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        assert_eq!(
+            block_on(repo.release_recordings(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(
+            block_on(repo.release_group(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(
+            block_on(repo.group_releases(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(
+            block_on(repo.artist_urls(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(
+            block_on(repo.recording_videos(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(
+            block_on(repo.recording_isrcs(id)).unwrap_err().stage(),
+            RepoStage::Query
+        );
+        assert_eq!(repo.source.body_reads.get(), 0);
+        assert_eq!(repo.source.range_reads.get(), 0);
+    }
+
     fn block_on<F: Future>(future: F) -> F::Output {
         let mut cx = Context::from_waker(Waker::noop());
         let mut future = Box::pin(future);
@@ -848,11 +1185,24 @@ mod tests {
     #[derive(Default)]
     struct MemSource {
         objects: HashMap<String, Vec<u8>>,
+        body_reads: std::cell::Cell<usize>,
+        range_reads: std::cell::Cell<usize>,
     }
 
     impl RangeSource for MemSource {
-        async fn read_all(&self, key: &str) -> Result<Option<Vec<u8>>, RepoError> {
-            Ok(self.objects.get(key).cloned())
+        async fn read_all_exact(
+            &self,
+            key: &str,
+            expected_len: usize,
+        ) -> Result<Option<Vec<u8>>, RepoError> {
+            let Some(bytes) = self.objects.get(key) else {
+                return Ok(None);
+            };
+            if bytes.len() != expected_len {
+                return Err(decode_failed());
+            }
+            self.body_reads.set(self.body_reads.get() + 1);
+            Ok(Some(bytes.clone()))
         }
         async fn read_range(
             &self,
@@ -860,10 +1210,17 @@ mod tests {
             offset: u64,
             len: u32,
         ) -> Result<Option<Vec<u8>>, RepoError> {
-            Ok(self.objects.get(key).map(|bytes| {
-                let start = offset as usize;
-                bytes[start..start + len as usize].to_vec()
-            }))
+            self.range_reads.set(self.range_reads.get() + 1);
+            checked_block_end(offset, len)?;
+            let Some(bytes) = self.objects.get(key) else {
+                return Ok(None);
+            };
+            let start = usize::try_from(offset).map_err(|_| decode_failed())?;
+            let end = start.checked_add(len as usize).ok_or_else(decode_failed)?;
+            bytes
+                .get(start..end)
+                .map(|bytes| Some(bytes.to_vec()))
+                .ok_or_else(decode_failed)
         }
     }
 
@@ -966,7 +1323,7 @@ mod tests {
             .map(|(k, v)| (k, serde_json::to_string(&v).unwrap()))
             .collect();
         write_kind(&mut source, prefix, SEARCH_KIND, &lines, key_bucket);
-        SnapshotRepo::new(source, prefix)
+        SnapshotRepo::new(source, prefix).unwrap()
     }
 
     #[test]
@@ -980,6 +1337,10 @@ mod tests {
         assert_eq!(key_bucket(""), 0x9dc5);
         assert_eq!(key_bucket("t:homogenic"), key_bucket("t:homogenic"));
         assert!(key_bucket("w:a") < BUCKETS);
+        // Independently calculated FNV-1a values, including UTF-8 bytes.
+        assert_eq!(key_bucket("t:homogenic"), 0x42dc);
+        assert_eq!(key_bucket("w:a"), 0xfe5f);
+        assert_eq!(key_bucket("t:東京"), 0x835d);
     }
 
     #[test]
@@ -1040,9 +1401,47 @@ mod tests {
         assert_eq!(similarity("The Wall!", "the wall"), 1.0);
     }
 
+    // Preserve the original a/b/x/y ordering vectors using valid, distinct
+    // UUIDs now that the public ranking boundary rejects corrupt IDs.
+    fn test_mbid(label: &str) -> String {
+        format!("00000000-0000-0000-0000-{:012x}", label.as_bytes()[0])
+    }
+
+    #[test]
+    fn canonically_equivalent_titles_share_keys_buckets_and_scores() {
+        assert_eq!(title_key("ΟΣ"), "t:ος");
+        assert_eq!(title_key("ΟΣ"), title_key(&crate::normalize_query("ΟΣ")));
+        assert_eq!(search_keys("ΟΣ"), search_keys("ος"));
+        assert_eq!(exact_trigrams("ΟΣ"), exact_trigrams("ος"));
+        let posting = |mbid: &str, title: &str| Posting(mbid.into(), title.into(), None, None);
+        for (composed, decomposed) in [
+            ("Café Début", "Cafe\u{301} De\u{301}but"),
+            ("Ångström", "A\u{30a}ngstro\u{308}m"),
+            ("Йога", "И\u{306}ога"),
+        ] {
+            assert_eq!(words(composed), words(decomposed));
+            assert_eq!(title_key(composed), title_key(decomposed));
+            assert_eq!(search_keys(composed), search_keys(decomposed));
+            assert_eq!(
+                key_bucket(&title_key(composed)),
+                key_bucket(&title_key(decomposed))
+            );
+            assert_eq!(trigrams(composed), trigrams(decomposed));
+            assert_eq!(exact_trigrams(composed), exact_trigrams(decomposed));
+            let a = rank_postings(composed, [posting(RELEASE_A, composed)], 25, 0).unwrap();
+            let b = rank_postings(decomposed, [posting(RELEASE_A, composed)], 25, 0).unwrap();
+            assert_eq!(a.len(), 1);
+            assert_eq!(b.len(), 1);
+            assert_eq!(a[0].mbid, b[0].mbid);
+            assert_eq!(a[0].score, b[0].score);
+        }
+        assert_ne!(title_key("cafe noir"), title_key("cafe nord"));
+        assert_ne!(exact_trigrams("cafe"), exact_trigrams("café"));
+    }
+
     #[test]
     fn ranking_follows_the_postgres_release_order() {
-        let p = |mbid: &str, title: &str| Posting(mbid.into(), title.into(), None, None);
+        let p = |mbid: &str, title: &str| Posting(test_mbid(mbid), title.into(), None, None);
         let hits = rank_postings(
             "homogenic",
             vec![
@@ -1054,9 +1453,10 @@ mod tests {
             ],
             25,
             0,
-        );
+        )
+        .unwrap();
         let order: Vec<&str> = hits.iter().map(|h| h.mbid.as_str()).collect();
-        assert_eq!(order, vec!["a", "b", "c"]);
+        assert_eq!(order, vec![test_mbid("a"), test_mbid("b"), test_mbid("c")]);
         assert_eq!(hits[0].score, 1.0);
         assert!(hits[2].score < 1.0 && hits[2].score >= SEARCH_MIN_SCORE);
         let page = rank_postings(
@@ -1064,14 +1464,15 @@ mod tests {
             vec![p("a", "Homogenic"), p("b", "Homogenic")],
             1,
             1,
-        );
+        )
+        .unwrap();
         assert_eq!(page.len(), 1);
-        assert_eq!(page[0].mbid, "b");
+        assert_eq!(page[0].mbid, test_mbid("b"));
     }
 
     #[test]
     fn ties_follow_the_database_collation_and_the_exact_score() {
-        let p = |mbid: &str, title: &str| Posting(mbid.into(), title.into(), None, None);
+        let p = |mbid: &str, title: &str| Posting(test_mbid(mbid), title.into(), None, None);
         // Collation order, not byte order: punctuation ignored first, then
         // lowercase before uppercase.
         let hits = rank_postings(
@@ -1084,15 +1485,19 @@ mod tests {
             ],
             25,
             0,
-        );
+        )
+        .unwrap();
         let order: Vec<&str> = hits.iter().map(|h| h.label.as_str()).collect();
         assert_eq!(order[1..], ["late show", "Late Show", "LATE SHOW"]);
         assert!(hits.iter().all(|h| h.score == 1.0));
         // Titles that fold alike: the unaccented query prefers the ASCII
         // title, the accented query the accented one.
         let twins = || vec![p("x", "Detente"), p("y", "Détente")];
-        assert_eq!(rank_postings("detente", twins(), 25, 0)[0].label, "Detente");
-        let hits = rank_postings("détente", twins(), 25, 0);
+        assert_eq!(
+            rank_postings("detente", twins(), 25, 0).unwrap()[0].label,
+            "Detente"
+        );
+        let hits = rank_postings("détente", twins(), 25, 0).unwrap();
         assert_eq!(hits[0].label, "Détente");
         assert_eq!(hits[1].score, 1.0, "folded score is unchanged");
     }
@@ -1157,15 +1562,476 @@ mod tests {
     }
 
     #[test]
+    fn index_ranges_reject_overflow_and_preserve_boundary_buckets() {
+        let block = BlockRef {
+            part: 0,
+            len: 1,
+            offset: 0,
+        };
+        let mut idx = vec![0; IDX_LEN];
+        idx[..IDX_ENTRY_LEN].copy_from_slice(&encode_idx_entry(block));
+        idx[IDX_LEN - IDX_ENTRY_LEN..].copy_from_slice(&encode_idx_entry(block));
+        assert_eq!(idx_entry(&idx, 0), Some(block));
+        assert_eq!(idx_entry(&idx, BUCKETS - 1), Some(block));
+        for bucket in [BUCKETS, usize::MAX, usize::MAX / IDX_ENTRY_LEN] {
+            assert_eq!(idx_entry(&idx, bucket), None);
+        }
+        assert_eq!(idx_entry(&[], 0), None);
+        assert_eq!(idx_entry(&idx[..IDX_ENTRY_LEN - 1], 0), None);
+    }
+
+    #[test]
+    fn posting_identifiers_are_validated_before_ranking_and_pagination() {
+        let p = |mbid: &str, related: Option<String>| {
+            Posting(mbid.into(), "Homogenic".into(), related, None)
+        };
+        let hits = rank_postings(
+            "homogenic",
+            [
+                p(
+                    &RELEASE_A.to_ascii_uppercase(),
+                    Some(ARTIST.to_ascii_uppercase()),
+                ),
+                p(RELEASE_A, None),
+                p(RELEASE_B, None),
+            ],
+            1,
+            1,
+        )
+        .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].mbid, RELEASE_B,
+            "case variants consume only one slot"
+        );
+        let hits = rank_postings(
+            "homogenic",
+            [p(
+                &RELEASE_A.to_ascii_uppercase(),
+                Some(ARTIST.to_ascii_uppercase()),
+            )],
+            25,
+            0,
+        )
+        .unwrap();
+        assert_eq!(hits[0].mbid, RELEASE_A);
+        assert_eq!(hits[0].artist_mbid.as_deref(), Some(ARTIST));
+        for invalid in [
+            "not-a-uuid",
+            "1e6a0e9b-0000-4000-8000-00000000000",
+            "ge6a0e9b-0000-4000-8000-000000000001",
+        ] {
+            let err = rank_postings("homogenic", [p(invalid, None)], 0, 10).unwrap_err();
+            assert_eq!(err.stage(), RepoStage::Decode);
+            let err = rank_postings("homogenic", [p(RELEASE_A, Some(invalid.into()))], 25, 0)
+                .unwrap_err();
+            assert_eq!(err.stage(), RepoStage::Decode);
+        }
+    }
+
+    #[test]
+    fn posting_decoding_enforces_each_key_cap_without_dedup_shortcuts() {
+        let posting = Posting(RELEASE_A.into(), "Homogenic".into(), None, None);
+        for (key, cap) in [
+            ("t:homogenic", MAX_TITLE_POSTINGS),
+            ("w:homogenic", MAX_WORD_POSTINGS),
+        ] {
+            let exact = serde_json::to_string(&vec![posting.clone(); cap]).unwrap();
+            assert_eq!(decode_postings(key, &exact).unwrap().len(), cap);
+            let extra = serde_json::to_string(&vec![posting.clone(); cap + 1]).unwrap();
+            assert_eq!(
+                decode_postings(key, &extra).unwrap_err().stage(),
+                RepoStage::Decode
+            );
+            for malformed in ["[null]", "[[1,2,3,4]]", "[] false"] {
+                assert_eq!(
+                    decode_postings(key, malformed).unwrap_err().stage(),
+                    RepoStage::Decode
+                );
+            }
+            for corrupt in [
+                Posting("not-a-uuid".into(), "Homogenic".into(), None, None),
+                Posting(
+                    RELEASE_A.into(),
+                    "Homogenic".into(),
+                    Some("invalid".into()),
+                    None,
+                ),
+            ] {
+                let value = serde_json::to_string(&vec![corrupt]).unwrap();
+                assert_eq!(
+                    decode_postings(key, &value).unwrap_err().stage(),
+                    RepoStage::Decode
+                );
+            }
+        }
+        assert!(decode_postings("unknown", "[]").is_err());
+        assert!(search_keys("one two three four five six").len() <= 1 + MAX_QUERY_WORDS);
+        let repo = fixture("snap/duplicates/");
+        let postings = block_on(repo.search_postings("homogenic live")).unwrap();
+        assert!(postings.len() <= MAX_TITLE_POSTINGS + MAX_QUERY_WORDS * MAX_WORD_POSTINGS);
+        let hits = rank_postings("homogenic live", postings, 25, 0).unwrap();
+        assert_eq!(hits.iter().filter(|hit| hit.mbid == RELEASE_B).count(), 1);
+    }
+
+    #[test]
+    fn related_lookup_identifiers_are_validated_and_canonicalized() {
+        for related in [None, Some(ARTIST.to_ascii_uppercase())] {
+            let row = ReleaseRow {
+                artist_mbid: related.clone(),
+                title: "Homogenic".into(),
+                release_type: None,
+                year: None,
+                caa_url: None,
+            };
+            let Some(Entity::Release(release)) = decode_entity(
+                Kind::Release,
+                &RELEASE_A.to_ascii_uppercase(),
+                &serde_json::to_string(&row).unwrap(),
+            ) else {
+                panic!("valid release");
+            };
+            assert_eq!(release.mbid, RELEASE_A);
+            assert_eq!(release.artist_mbid, related.map(|_| ARTIST.to_owned()));
+        }
+        for related in [None, Some(RELEASE_A.to_ascii_uppercase())] {
+            let row = RecordingRow {
+                release_mbid: related.clone(),
+                title: "Jóga".into(),
+                track_no: None,
+                duration_ms: None,
+            };
+            let Some(Entity::Recording(recording)) = decode_entity(
+                Kind::Recording,
+                RELEASE_B,
+                &serde_json::to_string(&row).unwrap(),
+            ) else {
+                panic!("valid recording");
+            };
+            assert_eq!(
+                recording.release_mbid,
+                related.map(|_| RELEASE_A.to_owned())
+            );
+        }
+        assert!(decode_entity(
+            Kind::Release,
+            RELEASE_A,
+            r#"{"title":"ok","artist_mbid":"invalid"}"#
+        )
+        .is_none());
+        assert!(decode_entity(
+            Kind::Recording,
+            RELEASE_B,
+            r#"{"title":"ok","release_mbid":"invalid"}"#
+        )
+        .is_none());
+        assert!(decode_entity(Kind::Release, "not-a-uuid", r#"{"title":"ok"}"#).is_none());
+        assert!(decode_entity(Kind::Release, RELEASE_A, r#"{"title":"ok"}"#).is_some());
+        assert!(decode_entity(Kind::Recording, RELEASE_B, r#"{"title":"ok"}"#).is_some());
+        let repo = fixture("snap/invalid-lookup/");
+        assert!(block_on(repo.lookup(Kind::Artist, "0383-not-a-uuid")).is_err());
+        assert_eq!(repo.reads(), 0);
+    }
+
+    #[test]
+    fn index_cache_is_source_local_in_both_orders_and_evicts() {
+        for populated_first in [false, true] {
+            let populated = fixture("snap/shared/");
+            let mut source = MemSource::default();
+            source
+                .objects
+                .insert(idx_object("snap/shared/", "artist"), vec![0; IDX_LEN]);
+            let empty = SnapshotRepo::new(source, "snap/shared/").unwrap();
+            for (repo, expected) in if populated_first {
+                [(&populated, true), (&empty, false)]
+            } else {
+                [(&empty, false), (&populated, true)]
+            } {
+                assert_eq!(
+                    block_on(repo.lookup(Kind::Artist, ARTIST))
+                        .unwrap()
+                        .is_some(),
+                    expected
+                );
+                let before = repo.source.body_reads.get();
+                assert_eq!(
+                    block_on(repo.lookup(Kind::Artist, ARTIST))
+                        .unwrap()
+                        .is_some(),
+                    expected
+                );
+                assert_eq!(
+                    repo.source.body_reads.get(),
+                    before,
+                    "same repository reuses its index"
+                );
+            }
+        }
+        let repo = fixture("snap/eviction/");
+        block_on(repo.index("artist")).unwrap();
+        block_on(repo.index("release")).unwrap();
+        assert_eq!(repo.source.body_reads.get(), 2);
+        block_on(repo.index(SEARCH_KIND)).unwrap();
+        assert_eq!(repo.indexes.borrow().len(), MAX_CACHED_INDEXES);
+        let bytes: usize = repo
+            .indexes
+            .borrow()
+            .iter()
+            .map(|(_, bytes)| bytes.len())
+            .sum();
+        assert_eq!(bytes, MAX_CACHED_INDEXES * IDX_LEN);
+        block_on(repo.index("artist")).unwrap();
+        assert_eq!(repo.source.body_reads.get(), 4, "evicted index reloads");
+        assert_eq!(repo.indexes.borrow().len(), MAX_CACHED_INDEXES);
+        let other = fixture("snap/another/");
+        assert!(block_on(other.lookup(Kind::Artist, ARTIST))
+            .unwrap()
+            .is_some());
+        assert_eq!(other.source.body_reads.get(), 1);
+    }
+
+    #[test]
+    fn missing_or_empty_prefix_cannot_fall_back_to_root_objects() {
+        let mut source = MemSource::default();
+        source.objects.insert("artist.idx".into(), vec![0; IDX_LEN]);
+        for prefix in [
+            Err("missing"),
+            Err("unreadable"),
+            Ok(String::new()),
+            Ok("   ".into()),
+        ] {
+            let selected = configured_prefix(prefix);
+            assert!(selected.is_err());
+            assert_eq!(source.body_reads.get(), 0);
+            assert_eq!(source.range_reads.get(), 0);
+        }
+        assert!(SnapshotRepo::new(source, "").is_err());
+        assert_eq!(
+            configured_prefix(Ok::<_, ()>("snap/valid/".into())).unwrap(),
+            "snap/valid/"
+        );
+        // Health and authentication still precede configuration and storage;
+        // a source-wiring guard is not a Worker runtime execution claim.
+        let src = include_str!("snapshot.rs");
+        let router = src
+            .split("pub async fn spike_fetch(")
+            .nth(1)
+            .unwrap()
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let health = router.find("path == \"/healthz\"").unwrap();
+        let auth = router.find("expected.is_empty()").unwrap();
+        let prefix = router.find("configured_prefix(").unwrap();
+        let bucket = router.find("env.bucket(SNAPSHOT_BINDING)").unwrap();
+        assert!(health < auth && auth < prefix && prefix < bucket);
+    }
+
+    #[test]
+    fn invalid_block_spans_fail_before_range_io() {
+        for (offset, len) in [
+            (0, MAX_COMPRESSED_BLOCK_BYTES as u32 + 1),
+            (u64::MAX, 1),
+            (MAX_PART_BYTES, 1),
+            (MAX_PART_BYTES - 1, 2),
+        ] {
+            let mut source = MemSource::default();
+            let mut idx = vec![0; IDX_LEN];
+            idx[..IDX_ENTRY_LEN].copy_from_slice(&encode_idx_entry(BlockRef {
+                part: 0,
+                offset,
+                len,
+            }));
+            source
+                .objects
+                .insert(idx_object("snap/span/", "artist"), idx);
+            let repo = SnapshotRepo::new(source, "snap/span/").unwrap();
+            assert_eq!(
+                block_on(repo.block("artist", 0)).unwrap_err().stage(),
+                RepoStage::Decode
+            );
+            assert_eq!(repo.source.range_reads.get(), 0);
+            assert_eq!(repo.reads(), 1, "only the index was read");
+        }
+        assert_eq!(
+            checked_block_end(MAX_PART_BYTES - 1, 1).unwrap(),
+            MAX_PART_BYTES
+        );
+        assert_eq!(
+            checked_block_end(0, MAX_COMPRESSED_BLOCK_BYTES as u32).unwrap(),
+            MAX_COMPRESSED_BLOCK_BYTES as u64
+        );
+        assert!(checked_block_end(0, 0).is_err());
+        let source = MemSource::default();
+        assert!(block_on(source.read_range("missing", 0, 1))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn sized_reads_check_metadata_before_body_and_bound_streamed_bytes() {
+        use futures_util::stream;
+        let opens = std::cell::Cell::new(0);
+        for size in [0, IDX_LEN as u64 - 1, IDX_LEN as u64 + 1, u64::MAX] {
+            let err = block_on(read_sized_body(size, IDX_LEN, || {
+                opens.set(opens.get() + 1);
+                Ok(stream::iter([Ok::<_, ()>(Vec::new())]))
+            }))
+            .unwrap_err();
+            assert_eq!(err.stage(), RepoStage::Decode);
+            assert_eq!(opens.get(), 0);
+        }
+        for chunks in [
+            vec![vec![0; 3]],
+            vec![vec![0; 5]],
+            vec![vec![0; 2], vec![0; 3]],
+        ] {
+            assert_eq!(
+                block_on(read_sized_body(4, 4, || Ok(stream::iter(
+                    chunks.into_iter().map(Ok::<_, ()>)
+                ))))
+                .unwrap_err()
+                .stage(),
+                RepoStage::Decode
+            );
+        }
+        let bytes = block_on(read_sized_body(4, 4, || {
+            Ok(stream::iter([Ok::<_, ()>(vec![1, 2]), Ok(vec![3, 4])]))
+        }))
+        .unwrap();
+        assert_eq!(bytes, vec![1, 2, 3, 4]);
+        assert_eq!(
+            block_on(read_sized_body(1, 1, || Ok(stream::iter([Err::<
+                Vec<u8>,
+                _,
+            >(
+                ()
+            )]))))
+            .unwrap_err()
+            .stage(),
+            RepoStage::Query
+        );
+        let bytes = block_on(read_sized_body(IDX_LEN as u64, IDX_LEN, || {
+            Ok(stream::iter([Ok::<_, ()>(vec![0; IDX_LEN])]))
+        }))
+        .unwrap();
+        assert_eq!(bytes.len(), IDX_LEN);
+    }
+
+    #[test]
+    fn block_reads_reject_short_bodies_missing_data_and_invalid_encodings() {
+        struct ReturnedBody {
+            idx: Vec<u8>,
+            raw: Option<Vec<u8>>,
+        }
+        impl RangeSource for ReturnedBody {
+            async fn read_all_exact(
+                &self,
+                _: &str,
+                _: usize,
+            ) -> Result<Option<Vec<u8>>, RepoError> {
+                Ok(Some(self.idx.clone()))
+            }
+            async fn read_range(
+                &self,
+                _: &str,
+                _: u64,
+                _: u32,
+            ) -> Result<Option<Vec<u8>>, RepoError> {
+                Ok(self.raw.clone())
+            }
+        }
+        let valid = deflate_block(b"key\tvalue\n");
+        for (raw, len, stage) in [
+            (None, valid.len() as u32, RepoStage::Query),
+            (
+                Some(valid.clone()),
+                valid.len() as u32 + 1,
+                RepoStage::Decode,
+            ),
+            (Some(vec![0xff]), 1, RepoStage::Decode),
+            (
+                Some(deflate_block(&[0xff])),
+                deflate_block(&[0xff]).len() as u32,
+                RepoStage::Decode,
+            ),
+        ] {
+            let mut idx = vec![0; IDX_LEN];
+            idx[..IDX_ENTRY_LEN].copy_from_slice(&encode_idx_entry(BlockRef {
+                part: 0,
+                len,
+                offset: 0,
+            }));
+            let repo = SnapshotRepo::new(ReturnedBody { idx, raw }, "snap/body/").unwrap();
+            assert_eq!(
+                block_on(repo.block("artist", 0)).unwrap_err().stage(),
+                stage
+            );
+        }
+        let mut idx = vec![0; IDX_LEN];
+        idx[..IDX_ENTRY_LEN].copy_from_slice(&encode_idx_entry(BlockRef {
+            part: 0,
+            len: valid.len() as u32,
+            offset: 0,
+        }));
+        let repo = SnapshotRepo::new(
+            ReturnedBody {
+                idx,
+                raw: Some(valid),
+            },
+            "snap/body/",
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(repo.block("artist", 0)).unwrap().as_deref(),
+            Some("key\tvalue\n")
+        );
+        let repo = SnapshotRepo::new(
+            ReturnedBody {
+                idx: vec![0; 10],
+                raw: None,
+            },
+            "snap/contract-violation/",
+        )
+        .unwrap();
+        assert_eq!(
+            block_on(repo.block("artist", 0)).unwrap_err().stage(),
+            RepoStage::Decode
+        );
+    }
+
+    #[test]
+    fn compressed_cap_accepts_maximum_incompressible_plaintext() {
+        // Deterministic synthetic bytes, not an acquired dump or a hostile allocation.
+        let mut state = 0x1234_5678u32;
+        let plain: Vec<u8> = (0..MAX_SNAPSHOT_BLOCK_BYTES)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let raw = deflate_block(&plain);
+        assert!(
+            raw.len() > MAX_SNAPSHOT_BLOCK_BYTES,
+            "compressed and inflated caps are distinct"
+        );
+        assert!(raw.len() <= MAX_COMPRESSED_BLOCK_BYTES);
+        assert!(checked_block_end(0, raw.len() as u32).is_ok());
+        assert_eq!(inflate_block(&raw).unwrap(), plain);
+    }
+
+    #[test]
     fn missing_or_short_index_fails_closed() {
-        let repo = SnapshotRepo::new(MemSource::default(), "snap/none/");
+        let repo = SnapshotRepo::new(MemSource::default(), "snap/none/").unwrap();
         let err = block_on(repo.lookup(Kind::Artist, ARTIST)).unwrap_err();
         assert_eq!(err.stage(), RepoStage::Query);
         let mut source = MemSource::default();
         source
             .objects
             .insert(idx_object("snap/short/", "artist"), vec![0u8; 10]);
-        let repo = SnapshotRepo::new(source, "snap/short/");
+        let repo = SnapshotRepo::new(source, "snap/short/").unwrap();
         let err = block_on(repo.lookup(Kind::Artist, ARTIST)).unwrap_err();
         assert_eq!(err.stage(), RepoStage::Decode);
     }

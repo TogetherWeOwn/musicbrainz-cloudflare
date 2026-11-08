@@ -6,7 +6,7 @@
 //! unrepresentable here and `i64::MAX` is the effective maximum. Every test
 //! below uses `i64::MAX` / `i64::MAX - 1` on that reading.
 //!
-//! What is pinned (current behavior, implementation unchanged):
+//! What is pinned:
 //! - Evaluating through `i64::MAX` terminates: no wrap to 0/MIN, no panic,
 //!   no hang. A wrap would surface as a breach at 0/MIN or as an unbounded
 //!   scan; a hang would time the target out.
@@ -17,12 +17,11 @@
 //!   `pending_count` / `truncated` agree with the report, and an in-budget
 //!   pending packet at `MAX` counts as pending instead of breaching.
 //!
-//! Known edge pinned as-is: a ledger that already contains `MAX` still
-//! reports one `missing_sequence` at `MAX` when `latest_sequence == MAX`
-//! (the post-record `expected` uses `saturating_add`, so it sticks at `MAX`
-//! and the tail gap `MAX..=MAX` re-enumerates the present packet). A future
-//! fix for that off-by-one should update these assertions deliberately; the
-//! termination guarantees above still hold.
+//! Corrected edge: a ledger that already contains `MAX` has exhausted the
+//! sequence domain, so no tail gap re-enumerates that present packet. These
+//! two expectations deliberately correct the former saturating-successor
+//! false alarm, retaining all termination/no-wrap, real-gap, pending and
+//! bounded diagnostic guarantees.
 //!
 //! Sensitivity: mutate either `checked_add` arm in `workers/mb/src/replication.rs`
 //! (`report_gap`'s pending-cursor advance or `enumerate_unknown`'s step) to a
@@ -70,19 +69,17 @@ fn max_present_terminates_without_wrap() {
     assert_eq!(report.breach_count, report.breaches.len());
     assert_eq!(report.pending_count, 0);
     assert_no_wrap(&report);
-    // Current behavior (see module docs): the present MAX re-enumerates once.
-    assert_eq!(report.breach_count, 1);
-    assert_eq!(report.breaches[0].kind, "missing_sequence");
-    assert_eq!(report.breaches[0].sequence, Some(MAX));
-    assert_eq!(report.breaches[0].lag_secs, None);
+    assert_eq!(report.breach_count, 0);
+    assert!(report.breaches.is_empty());
 
     let event = parse_log(&report);
     assert_eq!(event["event"], "mb_replication_slo_breach");
-    assert_eq!(event["breach_count"], 1);
-    assert_eq!(event["missing_count"], 1);
+    assert_eq!(event["breach_count"], 0);
+    assert_eq!(event["missing_count"], 0);
     assert_eq!(event["pending_count"], 0);
     assert_eq!(event["truncated"], false);
-    assert_eq!(event["logged_breach_count"], 1);
+    assert_eq!(event["logged_breach_count"], 0);
+    assert!(event["breaches"].as_array().unwrap().is_empty());
 }
 
 /// Two consecutive top-end packets still terminate without wrapping.
@@ -97,14 +94,17 @@ fn consecutive_top_sequences_terminate_without_wrap() {
     assert_eq!(report.breach_count, report.breaches.len());
     assert_eq!(report.pending_count, 0);
     assert_no_wrap(&report);
-    // Same saturating-tail edge as the single-MAX case: pinned as-is.
-    assert_eq!(report.breach_count, 1);
-    assert_eq!(report.breaches[0].sequence, Some(MAX));
+    assert_eq!(report.breach_count, 0);
+    assert!(report.breaches.is_empty());
 
     let event = parse_log(&report);
-    assert_eq!(event["missing_count"], 1);
+    assert_eq!(event["event"], "mb_replication_slo_breach");
+    assert_eq!(event["breach_count"], 0);
+    assert_eq!(event["missing_count"], 0);
     assert_eq!(event["pending_count"], 0);
     assert_eq!(event["truncated"], false);
+    assert_eq!(event["logged_breach_count"], 0);
+    assert!(event["breaches"].as_array().unwrap().is_empty());
 }
 
 /// `MAX - 1` advances to `MAX`: the one-slot gap reports exactly the next sequence.

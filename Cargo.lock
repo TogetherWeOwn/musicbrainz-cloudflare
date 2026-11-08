@@ -516,6 +516,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio-postgres",
+ "unicode-normalization",
  "wasm-bindgen-futures",
  "worker",
 ]

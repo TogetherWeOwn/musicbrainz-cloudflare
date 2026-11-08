@@ -28,8 +28,11 @@
       "source_last_change": "3ac62bfd95f9dd04c70be410e6223a7ddc15e068",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/crates/nntune-logging/src/lib.rs",
       "destination": "crates/nntune-logging/src/lib.rs",
-      "destination_sha256": "5f4a511687da0adefe63c56fd3e22249aae48fb792fa2d09783c86f06f5dec5f",
-      "adaptations": []
+      "destination_sha256": "628fc6aa14796e657e90282a07364908e31736e321c88b51473b80b3c643a2f2",
+      "adaptations": [
+        "Harden named privacy recognizers and direct-constructor controls; retain only non-echoing error categories. Replace unsafe counter-fallback expectations with explicit entropy-failure controls, preserving valid inbound/random-ID guarantees.",
+        "Reject constructor timestamps beyond the inclusive unsigned 1970-9999 domain; retain helper signature and normal fixtures, add endpoint/rejection controls."
+      ]
     },
     {
       "source_path": "crates/nntune-logging/tests/build_sha_normalization.rs",
@@ -55,9 +58,10 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/Cargo.lock",
       "destination": "Cargo.lock",
-      "destination_sha256": "5a0a2dbf440dd721b01525d2633721304783f5174b8a4cefa8692a9eb9d54502",
+      "destination_sha256": "f6ff22aaf782e1959c41ae05733cc5f3b7c26be4ac5ae44a7d1e3c379d12c2d1",
       "adaptations": [
-        "Promote standalone worker lock to workspace root; dependency versions/checksums unchanged."
+        "Promote standalone worker lock to workspace root; dependency versions/checksums unchanged.",
+        "Add only the direct worker edge to already-locked unicode-normalization; all registry versions and checksums unchanged."
       ]
     },
     {
@@ -66,8 +70,10 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/Cargo.toml",
       "destination": "workers/mb/Cargo.toml",
-      "destination_sha256": "b6d5117edd62bc4de9faf625eabd929d6135cf4d19bda5acb9dd9274e377d2fd",
-      "adaptations": []
+      "destination_sha256": "0491bfbea3fae9880866c00635b2a060744781d752935ca3e36d0bb499f6ad88",
+      "adaptations": [
+        "Use exact locked unicode-normalization 0.1.25 without default features for canonical search keys; artifact/hooks review recorded separately."
+      ]
     },
     {
       "source_path": "workers/mb/src/api_error.rs",
@@ -84,11 +90,13 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/lib.rs",
       "destination": "workers/mb/src/lib.rs",
-      "destination_sha256": "81089ef333502afc85503784262973eb7318b760d360c9a2756712a77e096db6",
+      "destination_sha256": "6c16482f031a2ea832495ff1f7b9a0463879ac448afa750ccc55d5537598c95f",
       "adaptations": [
         "Replace source resource names with unprovisioned example bucket names; retain environment-boundary assertions.",
         "Remove source database resource identity from module documentation.",
-        "Format the longer example-URI assertion as required by first Actions rustfmt output; assertion unchanged."
+        "Format the longer example-URI assertion as required by first Actions rustfmt output; assertion unchanged.",
+        "Propagate trace entropy failure as a fixed 503 before cache/repository/log work in all traced routes; preserve normal trace propagation.",
+        "Keep above-cap empty search pages non-cacheable at the edge; share existing sanitized trace/completion helpers with the snapshot adapter."
       ]
     },
     {
@@ -97,8 +105,11 @@
       "source_last_change": "1bebdc641cfbceae83f2d15c6ceb105d538f0612",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/replication.rs",
       "destination": "workers/mb/src/replication.rs",
-      "destination_sha256": "d508ac793280184c20340e7f5b2c00c63d3473b9093d7dab5b2b5cd6ec0b9ed8",
-      "adaptations": []
+      "destination_sha256": "84f6c0cc7f373be4bd3be1bf41ebe3a6992c5a8d52ebac621f0bd01710ee1c98",
+      "adaptations": [
+        "Restrict applied-lag evaluation to the requested cursor, include known earlier pending publications without inventing an unknown baseline, and clarify signed clock-skew arithmetic; retain original assertions and add regressions.",
+        "Use an exhausted optional successor after present i64::MAX instead of re-enumerating it; strengthen report/log counts for cursor and earlier-pending regressions."
+      ]
     },
     {
       "source_path": "workers/mb/src/search_pagination_acceptance.rs",
@@ -115,8 +126,11 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/snapshot.rs",
       "destination": "workers/mb/src/snapshot.rs",
-      "destination_sha256": "43eca9c2bdcab75414825bf626d84bae5f5557fe25e1fc2d38293d6deb52e5d1",
-      "adaptations": []
+      "destination_sha256": "6f1986d2ea28238d501c85b30a22f3624b07a2c49e8b3d75b969eb9f54a42531",
+      "adaptations": [
+        "Validate and canonicalize stored identifiers before ranking/pagination; use bounded per-key posting deserialization and fallible repository construction. Replace global indexes with a bounded immutable-repository cache; enforce metadata, streamed body, compressed and part/range bounds before buffering or I/O. Add synthetic safety regressions; convert original toy ranking IDs to valid UUID fixtures while retaining ordering, score and pagination assertions.",
+        "Normalize keys/scores with whole-string lowercase plus NFC, add independently expected buckets, classify complete prefix segments/routes before bindings, explicitly error on unsupported repository methods, and reuse sanitized trace/completion helpers; add synthetic regressions."
+      ]
     },
     {
       "source_path": "workers/mb/src/snapshot_fold.tsv",
@@ -169,8 +183,10 @@
       "source_last_change": "d2e2d4c684172486279129a289b7e0ad4c2577ef",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/canonical_edge_cache_acceptance.rs",
       "destination": "workers/mb/tests/canonical_edge_cache_acceptance.rs",
-      "destination_sha256": "11d1fa2a7525fa23338ca78e369a11a47906562e309f3d341fba067382bde45a",
-      "adaptations": []
+      "destination_sha256": "e47332a7e07e86fa83791c239aae11d1a75cabb873c47d588ca6d97b49dcf343",
+      "adaptations": [
+        "Strengthen existing get/put wiring assertions to pin the canonical URL argument and cacheability guard; retain original assertions."
+      ]
     },
     {
       "source_path": "workers/mb/tests/canonical_edge_url_vectors.rs",
@@ -178,8 +194,10 @@
       "source_last_change": "d2e2d4c684172486279129a289b7e0ad4c2577ef",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/canonical_edge_url_vectors.rs",
       "destination": "workers/mb/tests/canonical_edge_url_vectors.rs",
-      "destination_sha256": "f399791da8a943667792db1b1d3048c51b5c37e4b50ae91032c4cc711f9ac54d",
-      "adaptations": []
+      "destination_sha256": "fdbb84104b11e0a9a264b1fe7612d52d786f59a44b24de3d7dca6032c5506420",
+      "adaptations": [
+        "Correct decoded numeric leading-plus documentation; all vector assertions unchanged."
+      ]
     },
     {
       "source_path": "workers/mb/tests/cover_art_env.rs",
@@ -226,8 +244,11 @@
       "source_last_change": "30dc8567e477c48c7b13b2df309364cb2b87e12f",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/logging_standard.rs",
       "destination": "workers/mb/tests/logging_standard.rs",
-      "destination_sha256": "0277d40ae4ecd70409768d888498236b0f93674657fa9ae83733ce9da196ecec",
-      "adaptations": []
+      "destination_sha256": "999240f3de7f9278add84dc0fcff275f28fa79408bc13e5ac86b39a62c316c42",
+      "adaptations": [
+        "Restrict fixture JSON whitespace and Unicode escapes to JSON grammar, recognize compressed all-zero IPv6 in the independent oracle, and add negative/valid controls without removing retained assertions.",
+        "Also exercise retained sensitive and benign oracle vectors through the shared validator and direct log-record constructor."
+      ]
     },
     {
       "source_path": "workers/mb/tests/lookup_cache_validation.rs",
@@ -307,8 +328,10 @@
       "source_last_change": "bd4d442b22df254093488b72d9f1d335702d63bf",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/replication_sequence_max_acceptance.rs",
       "destination": "workers/mb/tests/replication_sequence_max_acceptance.rs",
-      "destination_sha256": "b5c4bbd315e6bc4bbdfaf7768d439c8d88855b9639cf4afceef1d0075bdd8606",
-      "adaptations": []
+      "destination_sha256": "b864eea83c63102fd1a912d6d4a31fb6b84caf5a051d6dfed1ed31af0a29a4cd",
+      "adaptations": [
+        "Deliberately correct only two documented present-MAX false-alarm expectations to zero/empty report and log results; retain no-wrap, boundedness, real-gap, pending, event-name and count obligations after independent QA domain acceptance."
+      ]
     },
     {
       "source_path": "workers/mb/tests/search_validation.rs",
@@ -316,8 +339,10 @@
       "source_last_change": "82c7a93010975a98f17fc1763c7c3f67b8ee3baf",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/search_validation.rs",
       "destination": "workers/mb/tests/search_validation.rs",
-      "destination_sha256": "9f931ee37579159e60237d9a39c1cfb4bb0ce05fff3c7d0682544a7ed29fad0d",
-      "adaptations": []
+      "destination_sha256": "1b6f6325a1cbddb700c52d7a99aa5b22b81c2000c72fb08231cb5a704d2ef077",
+      "adaptations": [
+        "Add above-cap no-edge-write and at-cap cacheability controls; retain existing 200 empty-page, no-KV/repository and validation assertions."
+      ]
     },
     {
       "source_path": "workers/mb/tests/trace_propagation_acceptance.rs",
@@ -325,8 +350,11 @@
       "source_last_change": "0a3e904caf9400b13a97fb5aee474db3701d3c0e",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/trace_propagation_acceptance.rs",
       "destination": "workers/mb/tests/trace_propagation_acceptance.rs",
-      "destination_sha256": "cdb70683a5cde9fa75fd8d0d351c272fc9c6cbf6832e5f5df2a162b9f3609385",
-      "adaptations": []
+      "destination_sha256": "8cfcd6a98f97d761f7f5d261fe2c883be2cb8cc6ec347470131cde59faabb182",
+      "adaptations": [
+        "Unwrap successful fallible trace resolution without dropping retained assertions; add adapter-source guards for fixed entropy-failure responses before downstream work.",
+        "Pin snapshot reuse of shared trace/header and sanitized status/build-only completion helpers, with entropy failure before downstream work."
+      ]
     },
     {
       "source_path": "workers/mb/tests/w6b_reads_acceptance.rs",
@@ -350,10 +378,14 @@
       "source_path": "docs/logging-standard.md",
       "source_blob": "a2c36cd6f055c9758ee23d58c88e14a35981ae3f",
       "destination": "docs/logging-standard.md",
-      "destination_sha256": "0adc0fb9e2af6a3a182e316a824d4698fce59a187c50868b340eedf9cdf990e3",
+      "destination_sha256": "980fb2c935a2d660b65411d778937a9da01fd794215da2899def9c4e9577d5a3",
       "adaptations": [
-        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
-      ]
+        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied.",
+        "Document explicit trace entropy failure and fixed MB response without fabricated correlation IDs.",
+        "Clarify caller-side fields.build_sha normalization and the inclusive unsigned timestamp domain without expanding the generic schema."
+      ],
+      "source_last_change": "9e82ef76cf0f08eb8b5f81c0007f4a2c6f9d5e24",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/docs/logging-standard.md"
     },
     {
       "source_path": "docs/api-errors.md",
@@ -362,7 +394,9 @@
       "destination_sha256": "24b9bf0c08c934019765125871e5f2adb9f9c52a9fca18ac9c5825ec3f8f918c",
       "adaptations": [
         "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
-      ]
+      ],
+      "source_last_change": "5891b74058d9596fb03081e5245cfcf1c3c46bc4",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/docs/api-errors.md"
     },
     {
       "source_path": "workers/mb/README.md",
@@ -372,7 +406,9 @@
       "adaptations": [
         "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied.",
         "Keep Breach definition contiguous to preserve the retained replication-lag documentation assertion."
-      ]
+      ],
+      "source_last_change": "db66b2e74405ccea5e0d4ab6c506e2e471b1fab1",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/README.md"
     }
   ]
 }

@@ -47,6 +47,20 @@ def provenance_errors(root, manifest):
             errors.append(f"export digest drift: {relative}")
         if not re.fullmatch(r"[0-9a-f]{40}", record["source_blob"]):
             errors.append(f"invalid source blob: {relative}")
+        source_path = record.get("source_path")
+        if (not isinstance(source_path, str) or not source_path
+                or Path(source_path).is_absolute() or ".." in Path(source_path).parts):
+            errors.append(f"missing/invalid source path: {relative}")
+        else:
+            history = (
+                "https://github.com/TogetherWeOwn/nntunev2/commits/"
+                f"{SOURCE_REVISION}/{source_path}"
+            )
+            if record.get("contribution_history") != history:
+                errors.append(f"missing/unpinned contribution history: {relative}")
+        last_change = record.get("source_last_change")
+        if not isinstance(last_change, str) or not re.fullmatch(r"[0-9a-f]{40}", last_change):
+            errors.append(f"missing/invalid source last change: {relative}")
     return errors
 
 

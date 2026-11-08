@@ -1870,7 +1870,11 @@ pub async fn handle_search_paged<R: MbRepo, C: SuccessCache>(
             "results": [],
         })
         .to_string();
-        return success_response(body, SEARCH_CACHE_TTL_S);
+        return ApiResponse {
+            status: 200,
+            body,
+            cache_ttl: None,
+        };
     }
     let key = search_paged_cache_key(kind, &normalized_q, effective_limit, effective_offset);
     if let Some(body) = cache.get(&key).await {
@@ -1922,7 +1926,9 @@ mod http_layer {
     /// Resolve the request trace from the inbound `x-trace-id` header: a
     /// valid 128-bit ID is kept, anything else is replaced with a fresh
     /// random ID. The invalid value is never logged.
-    fn inbound_trace_id(req: &Request) -> String {
+    pub(crate) fn inbound_trace_id(
+        req: &Request,
+    ) -> std::result::Result<String, nntune_logging::LogError> {
         let header = req
             .headers()
             .get(nntune_logging::TRACE_HEADER)
@@ -1950,7 +1956,7 @@ mod http_layer {
     /// unwired lane). Normalized through the shared validator, never logged
     /// raw; never fail-closed, so a missing identity degrades the line instead
     /// of the request.
-    fn build_sha_from_env(env: &Env) -> String {
+    pub(crate) fn build_sha_from_env(env: &Env) -> String {
         nntune_logging::parse_build_sha(env_string(env, "BUILD_SHA").as_deref())
     }
 
@@ -1959,7 +1965,7 @@ mod http_layer {
     /// a banned key or secret-like value drops the line instead of leaking
     /// it. All call-site fields are constants plus opaque kinds and status
     /// codes, so the drop branch only fires on a code bug.
-    fn emit(level: Level, trace_id: &str, event: &str, fields: serde_json::Value) {
+    pub(crate) fn emit(level: Level, trace_id: &str, event: &str, fields: serde_json::Value) {
         let ts_millis = worker::Date::now().as_millis();
         let Ok(field_map) = nntune_logging::fields_from_json(fields) else {
             return;
@@ -1986,7 +1992,7 @@ mod http_layer {
     /// The edge-cache copy stays untraced: a cached trace would replay one
     /// request's ID to later clients. Best-effort: a header failure must not
     /// fail the request itself.
-    fn with_trace(mut response: Response, trace_id: &str) -> Response {
+    pub(crate) fn with_trace(mut response: Response, trace_id: &str) -> Response {
         let _ = response
             .headers_mut()
             .append(nntune_logging::TRACE_HEADER, trace_id);
@@ -2518,7 +2524,9 @@ mod http_layer {
         // Resolve before the edge lookup: cache hits are the hot path, and
         // they still echo the trace and log one line. The cached copy itself
         // stays untraced (wrapping only mutates the served clone).
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         // Build identity rides every line (mirrors the api worker): the deploy
         // lane's public BUILD_SHA var, or explicit "unknown" when unwired.
         let build_sha = build_sha_from_env(&ctx.env);
@@ -2559,7 +2567,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the other routes: resolve before the edge
         // lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         // Build identity rides every line (mirrors the api worker): the deploy
         // lane's public BUILD_SHA var, or explicit "unknown" when unwired.
         let build_sha = build_sha_from_env(&ctx.env);
@@ -2600,7 +2610,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the lookup routes: resolve before the
         // edge lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         let build_sha = build_sha_from_env(&ctx.env);
         let mbid = ctx.param("mbid").map(String::as_str).unwrap_or("");
         if let Some(hit) = edge_hit(req, |body| {
@@ -2639,7 +2651,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the other routes: resolve before the edge
         // lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         let build_sha = build_sha_from_env(&ctx.env);
         let mbid = ctx.param("mbid").map(String::as_str).unwrap_or("");
         if let Some(hit) = edge_hit(req, |body| {
@@ -2678,7 +2692,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the other routes: resolve before the edge
         // lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         let build_sha = build_sha_from_env(&ctx.env);
         let mbid = ctx.param("mbid").map(String::as_str).unwrap_or("");
         if let Some(hit) = edge_hit(req, |body| {
@@ -2717,7 +2733,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the other routes: resolve before the edge
         // lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         let build_sha = build_sha_from_env(&ctx.env);
         let mbid = ctx.param("mbid").map(String::as_str).unwrap_or("");
         if let Some(hit) = edge_hit(req, |body| {
@@ -2756,7 +2774,9 @@ mod http_layer {
     ) -> WorkerResult<Response> {
         // Same trace contract as the other routes: resolve before the edge
         // lookup so cache hits still echo the trace and log one line.
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         let build_sha = build_sha_from_env(&ctx.env);
         let mbid = ctx.param("mbid").map(String::as_str).unwrap_or("");
         if let Some(hit) = edge_hit(req, |body| {
@@ -2801,7 +2821,9 @@ mod http_layer {
     }
 
     pub async fn search_route(req: &Request, ctx: &RouteContext<()>) -> WorkerResult<Response> {
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         // Build identity rides every line (mirrors the api worker): the deploy
         // lane's public BUILD_SHA var, or explicit "unknown" when unwired.
         let build_sha = build_sha_from_env(&ctx.env);
@@ -2883,7 +2905,9 @@ mod http_layer {
     }
 
     pub async fn not_found(req: &Request, env: &Env) -> WorkerResult<Response> {
-        let trace_id = inbound_trace_id(req);
+        let Ok(trace_id) = inbound_trace_id(req) else {
+            return Response::error("Service unavailable", 503);
+        };
         // The catch-all still carries build identity: the router passes the
         // request env so scanner-noise 404s stay attributable to a release.
         let build_sha = build_sha_from_env(env);

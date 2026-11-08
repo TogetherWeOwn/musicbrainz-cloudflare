@@ -21,7 +21,7 @@ const FIXTURE_MILLIS: u64 = 1_792_094_400_123;
 
 #[test]
 fn inbound_trace_resolution_keeps_valid_ids_and_regenerates_the_rest() {
-    assert_eq!(resolve_trace_id(Some(TRACE)), TRACE);
+    assert_eq!(resolve_trace_id(Some(TRACE)).unwrap(), TRACE);
     for header in [
         None,
         Some(""),
@@ -29,7 +29,7 @@ fn inbound_trace_resolution_keeps_valid_ids_and_regenerates_the_rest() {
         Some("9F3A4C2E1B5D4F6A8C7E9D0B1A2F4E6C"),
         Some("9f3a4c2e-1b5d-4f6a-8c7e-9d0b1a2f4e6c"),
     ] {
-        let resolved = resolve_trace_id(header);
+        let resolved = resolve_trace_id(header).unwrap();
         assert!(
             is_valid_trace_id(&resolved),
             "must resolve {header:?} to a valid 128-bit ID"
@@ -129,6 +129,97 @@ fn mb_emitter_privacy_backstop_rejects_personal_data_and_secrets() {
         assert!(
             fields_from_json(serde_json::json!({"detail": value})).is_ok(),
             "emitter rejected operational value {value}"
+        );
+    }
+}
+
+#[test]
+fn entropy_failure_stops_routes_before_cache_or_repository_work() {
+    let source = include_str!("../src/lib.rs");
+    let production = source.split_once("#[cfg(test)]").unwrap().0;
+    for name in [
+        "lookup_route",
+        "release_recordings_route",
+        "release_group_route",
+        "group_releases_route",
+        "artist_urls_route",
+        "recording_videos_route",
+        "recording_isrcs_route",
+        "search_route",
+        "not_found",
+    ] {
+        let route = production
+            .split_once(&format!("pub async fn {name}("))
+            .expect("route must exist")
+            .1
+            .split_once("\n    }\n")
+            .unwrap()
+            .0;
+        let guard_end = route
+            .find("return Response::error(\"Service unavailable\", 503);")
+            .expect("entropy failure must return a fixed client-safe response");
+        assert!(route[..guard_end].contains("let Ok(trace_id) = inbound_trace_id(req) else"));
+        for downstream in [
+            "edge_hit(",
+            "build_sha_from_env(",
+            "PgRepo {",
+            "emit(",
+            "serve(",
+        ] {
+            if let Some(position) = route.find(downstream) {
+                assert!(
+                    guard_end < position,
+                    "entropy failure must precede {downstream}"
+                );
+            }
+        }
+    }
+    assert!(!production.contains("fallback_trace_id"));
+}
+
+#[test]
+fn snapshot_reuses_trace_echo_and_sanitized_completion_helpers() {
+    let source = include_str!("../src/snapshot.rs");
+    let wrapper = source
+        .split_once("pub async fn spike_fetch(")
+        .unwrap()
+        .1
+        .split_once("async fn spike_response(")
+        .unwrap()
+        .0;
+    let failure = wrapper
+        .find("return Response::error(\"Service unavailable\", 503);")
+        .unwrap();
+    assert!(wrapper[..failure].contains("inbound_trace_id(&req)"));
+    assert!(
+        failure
+            < wrapper
+                .find("let build_sha = build_sha_from_env(&env)")
+                .unwrap()
+    );
+    assert!(
+        failure
+            < wrapper
+                .find("let response = spike_response(req, env).await?")
+                .unwrap()
+    );
+    assert!(wrapper.contains("Ok(with_trace(response, &trace_id))"));
+    assert!(wrapper.contains("\"mb.snapshot.completed\""));
+    let compact: String = wrapper.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(compact.contains(
+        "serde_json::json!({\"status_code\":response.status_code(),\"build_sha\":build_sha})"
+    ));
+    for forbidden in [
+        "raw_q",
+        "query.get",
+        "BENCH_HEADER",
+        "mbid",
+        "posting",
+        "prefix",
+    ] {
+        assert!(
+            !wrapper.contains(forbidden),
+            "completion sink must not include {forbidden}"
         );
     }
 }

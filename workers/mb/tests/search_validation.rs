@@ -380,6 +380,10 @@ fn offset_above_cap_short_circuits_before_cache_and_repo() {
             "offset {offset} must never mint a cache key"
         );
         assert!(cache.stored.borrow().is_empty(), "offset {offset}");
+        assert_eq!(
+            resp.cache_ttl, None,
+            "offset {offset} must not write the edge cache"
+        );
     }
 }
 
@@ -406,6 +410,10 @@ fn offset_at_cap_queries_and_cap_plus_one_short_circuits() {
     assert_eq!(body["limit"], 10);
     assert_eq!(*repo.search_calls.borrow(), 1);
     assert_eq!(*repo.last_offset.borrow(), DOCUMENTED_MAX_SEARCH_OFFSET);
+    assert!(
+        resp.cache_ttl.is_some(),
+        "at-cap pages remain edge cacheable"
+    );
     assert_eq!(*cache.gets.borrow(), 1);
     assert_eq!(*cache.puts.borrow(), 1);
 

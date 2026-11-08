@@ -3,7 +3,8 @@ Title: Conventional Commits header, e.g. `fix(auth): refuse expired sudo session
 Types: feat fix perf refactor test docs build ci chore revert style security. ≤100 chars, no trailing period.
 In every repo, public or private: no internal ticket ids, instance links, localhost or private-network
 addresses in title, body, commits or branch. Link only public GitHub issues (`Fixes #123`); link the card
-from the tracker side. The required pr-standards check enforces this.
+from the tracker side. The required pr-standards check helps enforce this; also manually check
+branch names, including text that resembles a GitHub URL.
 Rules: https://github.com/TogetherWeOwn/.github/blob/main/CONTRIBUTING.md
 Open as draft; mark ready when complete. Batch fixes per review round.
 -->
