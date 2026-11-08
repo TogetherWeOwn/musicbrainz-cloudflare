@@ -366,8 +366,10 @@
       "source_path": "workers/mb/README.md",
       "source_blob": "ce3bbd49c56257e23d52810d4826658bde26c70e",
       "destination": "workers/mb/README.md",
+      "destination_sha256": "15a3ff7cfc1828c5b3534d9063b997e75f692377f300fc5246b08111a5be05e1",
       "adaptations": [
-        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
+        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied.",
+        "Keep Breach definition contiguous to preserve the retained replication-lag documentation assertion."
       ]
     }
   ]

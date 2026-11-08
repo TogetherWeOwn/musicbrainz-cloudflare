@@ -64,8 +64,8 @@ make this backend feature-complete or safe for production adoption.
 `src/replication.rs` and its synthetic ledger/replay/conflict/SLO tests are
 pure contracts, **not** an hourly downloader or applied SQL migration.
 P95 source: the recorded per-packet publication-to-application lag
-population in `PacketLedger`; fixture timestamps are synthetic. Breach
-definition: `ReplicationSloProbe` reports lag over two hours and missing
+population in `PacketLedger`; fixture timestamps are synthetic.
+Breach definition: `ReplicationSloProbe` reports lag over two hours and missing
 sequences using its configured bounds. It emits
 `mb_replication_slo_breach` structured diagnostics/metrics. This does not
 prove an operational feed SLO, durable ledger, refresh cadence or licensed
