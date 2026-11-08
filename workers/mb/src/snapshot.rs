@@ -1130,7 +1130,13 @@ mod tests {
             assert_eq!(spike_route(&segments), None, "{path}");
         }
         let source = include_str!("snapshot.rs");
-        let router = source.split_once("pub async fn spike_fetch(").unwrap().1;
+        let router = source
+            .split_once("pub async fn spike_fetch(")
+            .unwrap()
+            .1
+            .split_once("#[cfg(test)]")
+            .unwrap()
+            .0;
         let classified = router.find("let Some(route) = spike_route(").unwrap();
         assert!(classified < router.find("configured_prefix(env.var(").unwrap());
         assert!(classified < router.find("env.bucket(").unwrap());
