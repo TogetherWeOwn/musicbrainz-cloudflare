@@ -132,7 +132,7 @@ class ExportGuardTests(unittest.TestCase):
                 source = root / ("sample.md" if case == "no-rust" else "sample.rs")
                 source.write_bytes(b"pub fn valid() {}")
                 if case == "binary":
-                    source.write_bytes(b"\\xff")
+                    source.write_bytes(b"\xff")
                 if case == "large":
                     source.write_bytes(b"x" * 1_000_001)
                 record = {**source_metadata("sample.rs"), "source_blob": "a" * 40,
@@ -148,11 +148,11 @@ class ExportGuardTests(unittest.TestCase):
                     "source_revision": guard.SOURCE_REVISION, "files": [record]}))
                 (root / "workers/mb").mkdir(parents=True)
                 (root / "workers/mb/wrangler.toml").write_text(
-                    "workers_dev = false\\npreview_urls = false\\n")
+                    "workers_dev = false\npreview_urls = false\n")
                 members = '["workers/mb", "crates/nntune-logging"]' if case != "members" else '["other"]'
-                (root / "Cargo.toml").write_text("[workspace]\\nmembers = " + members + "\\n")
+                (root / "Cargo.toml").write_text("[workspace]\nmembers = " + members + "\n")
                 with mock.patch.object(guard, "__file__", str(root / ".github/scripts/check_export.py")), \
-                        mock.patch.object(guard.subprocess, "check_output", return_value=(source.name + "\\0").encode()), \
+                        mock.patch.object(guard.subprocess, "check_output", return_value=(source.name + "\0").encode()), \
                         contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(guard.main(), 0 if case == "valid" else 1)
 

@@ -126,10 +126,11 @@
       "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
       "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/snapshot.rs",
       "destination": "workers/mb/src/snapshot.rs",
-      "destination_sha256": "6f1986d2ea28238d501c85b30a22f3624b07a2c49e8b3d75b969eb9f54a42531",
+      "destination_sha256": "a5b3c55572965aedf3c38e7b40ab60a40dc0d2fca4c6f90022831395704ee22c",
       "adaptations": [
         "Validate and canonicalize stored identifiers before ranking/pagination; use bounded per-key posting deserialization and fallible repository construction. Replace global indexes with a bounded immutable-repository cache; enforce metadata, streamed body, compressed and part/range bounds before buffering or I/O. Add synthetic safety regressions; convert original toy ranking IDs to valid UUID fixtures while retaining ordering, score and pagination assertions.",
-        "Normalize keys/scores with whole-string lowercase plus NFC, add independently expected buckets, classify complete prefix segments/routes before bindings, explicitly error on unsupported repository methods, and reuse sanitized trace/completion helpers; add synthetic regressions."
+        "Normalize keys/scores with whole-string lowercase plus NFC, add independently expected buckets, classify complete prefix segments/routes before bindings, explicitly error on unsupported repository methods, and reuse sanitized trace/completion helpers; add synthetic regressions.",
+        "Pass the unsupported-method test prefix directly to the generic constructor, removing ambiguous type conversion without changing assertions."
       ]
     },
     {

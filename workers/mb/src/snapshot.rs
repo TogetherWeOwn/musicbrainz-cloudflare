@@ -1140,7 +1140,7 @@ mod tests {
 
     #[test]
     fn unsupported_snapshot_methods_fail_without_store_reads() {
-        let repo = SnapshotRepo::new(MemSource::default(), "snap/unsupported/".into()).unwrap();
+        let repo = SnapshotRepo::new(MemSource::default(), "snap/unsupported/").unwrap();
         let id = "123e4567-e89b-12d3-a456-426614174000";
         assert_eq!(
             block_on(repo.release_recordings(id)).unwrap_err().stage(),
