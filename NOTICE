@@ -1,0 +1,17 @@
+This project includes MIT-licensed code from TogetherWeOwn/nntunev2.
+Copyright (c) TogetherWeOwn. The original MIT permission and disclaimer
+are preserved verbatim in LICENSE.
+
+Pinned extraction source:
+https://github.com/TogetherWeOwn/nntunev2/tree/3ecdd743b26c0881ac17520883aab717fb813ec6
+
+Original per-file blob and contribution-history links are recorded in
+provenance/source-export.json. Original contributions remain credited
+through that source history; this clean export does not claim authorship
+of the pre-existing worker, logging library or tests.
+
+Software licensing is separate from data and linked-content rights.
+No live MusicBrainz dump/feed or cover-art/video bytes are distributed.
+Synthetic fixtures are test material under the software's MIT licence.
+MusicBrainz is a trademark of the MetaBrainz Foundation; no affiliation
+or endorsement is implied.

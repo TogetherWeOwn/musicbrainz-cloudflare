@@ -1,0 +1,373 @@
+{
+  "schema_version": 1,
+  "source_repository": "https://github.com/TogetherWeOwn/nntunev2",
+  "source_revision": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+  "license": "MIT",
+  "files": [
+    {
+      "source_path": "LICENSE",
+      "source_blob": "13122b7e4e2deae57ad6a9f87c8ef32f5b8e3345",
+      "source_last_change": "11d1f03b0784adf6481f8d64d289b2d579d24c6b",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/LICENSE",
+      "destination": "LICENSE",
+      "destination_sha256": "35c32d8b63fbd8b35e3cbf2cdc26340de9a08b40925a9d472100519979c824c5",
+      "adaptations": []
+    },
+    {
+      "source_path": "crates/nntune-logging/Cargo.toml",
+      "source_blob": "86b079d6e35779d661fdaa27874627b30c3180c8",
+      "source_last_change": "30dc8567e477c48c7b13b2df309364cb2b87e12f",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/crates/nntune-logging/Cargo.toml",
+      "destination": "crates/nntune-logging/Cargo.toml",
+      "destination_sha256": "a693c1833d1c46470e538e9d90410605d18cd2a3c51477eb2b19df68de9d6092",
+      "adaptations": []
+    },
+    {
+      "source_path": "crates/nntune-logging/src/lib.rs",
+      "source_blob": "be45eeffbb0b2d622753e25a3f25b6cf54281f3b",
+      "source_last_change": "3ac62bfd95f9dd04c70be410e6223a7ddc15e068",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/crates/nntune-logging/src/lib.rs",
+      "destination": "crates/nntune-logging/src/lib.rs",
+      "destination_sha256": "5f4a511687da0adefe63c56fd3e22249aae48fb792fa2d09783c86f06f5dec5f",
+      "adaptations": []
+    },
+    {
+      "source_path": "crates/nntune-logging/tests/build_sha_normalization.rs",
+      "source_blob": "61207d667fe3de826650ddcb6e2307c5c7d6a405",
+      "source_last_change": "dc98f4fc214e17e0bf0457707a769417b5bf6b1e",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/crates/nntune-logging/tests/build_sha_normalization.rs",
+      "destination": "crates/nntune-logging/tests/build_sha_normalization.rs",
+      "destination_sha256": "bce260fb833ea68410ed54324f54f83c3642475b39e333f1b2ec453737ca5f37",
+      "adaptations": []
+    },
+    {
+      "source_path": "crates/nntune-logging/tests/secret_value_shapes.rs",
+      "source_blob": "82e7ae638bd754b983c55ef7d011bf34193d208a",
+      "source_last_change": "5f346c22462dad7289376cbbd7bd75409625aa6c",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/crates/nntune-logging/tests/secret_value_shapes.rs",
+      "destination": "crates/nntune-logging/tests/secret_value_shapes.rs",
+      "destination_sha256": "ee45aa7e4b51b46096c157c03062dc972f33d573eb6f6f35ee56f04089954156",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/Cargo.lock",
+      "source_blob": "d21019c2a51145978b03717fd5d9a1a7d9f3964c",
+      "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/Cargo.lock",
+      "destination": "Cargo.lock",
+      "destination_sha256": "5a0a2dbf440dd721b01525d2633721304783f5174b8a4cefa8692a9eb9d54502",
+      "adaptations": [
+        "Promote standalone worker lock to workspace root; dependency versions/checksums unchanged."
+      ]
+    },
+    {
+      "source_path": "workers/mb/Cargo.toml",
+      "source_blob": "8e039cc79cd21e51c865f2e7835cee92ce8fddf5",
+      "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/Cargo.toml",
+      "destination": "workers/mb/Cargo.toml",
+      "destination_sha256": "b6d5117edd62bc4de9faf625eabd929d6135cf4d19bda5acb9dd9274e377d2fd",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/src/api_error.rs",
+      "source_blob": "bc7fa9ce54a0e712e5c75b25fb144ab20b96ed03",
+      "source_last_change": "2ee7226bbe89751a5083f0f6682463a704942754",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/api_error.rs",
+      "destination": "workers/mb/src/api_error.rs",
+      "destination_sha256": "a74c0a6b505ab0c47dd6d508b73af7c9626d84ba13ed4851cc526586828969ee",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/src/lib.rs",
+      "source_blob": "6cc63a4bbff13f71dc4ae27e7571d6b21dffd0d6",
+      "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/lib.rs",
+      "destination": "workers/mb/src/lib.rs",
+      "destination_sha256": "6b51d84f99fa232c0dfa0288eba4f41b14433651010e67bf7b5a2b51e5d40e14",
+      "adaptations": [
+        "Replace source resource names with unprovisioned example bucket names; retain environment-boundary assertions.",
+        "Remove source database resource identity from module documentation."
+      ]
+    },
+    {
+      "source_path": "workers/mb/src/replication.rs",
+      "source_blob": "5209165fd9dabb2a5462a7ea76c81060379256b3",
+      "source_last_change": "1bebdc641cfbceae83f2d15c6ceb105d538f0612",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/replication.rs",
+      "destination": "workers/mb/src/replication.rs",
+      "destination_sha256": "d508ac793280184c20340e7f5b2c00c63d3473b9093d7dab5b2b5cd6ec0b9ed8",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/src/search_pagination_acceptance.rs",
+      "source_blob": "c8933e3be6a0688b58e309fbe96a96a28d473b85",
+      "source_last_change": "2ee7226bbe89751a5083f0f6682463a704942754",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/search_pagination_acceptance.rs",
+      "destination": "workers/mb/src/search_pagination_acceptance.rs",
+      "destination_sha256": "3db690c91f9046086c0dd88bf60376d5f9a93738e95cbad26266bec0ca9cb6b7",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/src/snapshot.rs",
+      "source_blob": "a388a316ae6b7a152508dc6abc441d6c822ef9c0",
+      "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/snapshot.rs",
+      "destination": "workers/mb/src/snapshot.rs",
+      "destination_sha256": "43eca9c2bdcab75414825bf626d84bae5f5557fe25e1fc2d38293d6deb52e5d1",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/src/snapshot_fold.tsv",
+      "source_blob": "f8cd9c161762f7326d8361e11de3eb94b7b467a6",
+      "source_last_change": "3ecdd743b26c0881ac17520883aab717fb813ec6",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/src/snapshot_fold.tsv",
+      "destination": "workers/mb/src/snapshot_fold.tsv",
+      "destination_sha256": "592870a441d418935f116cceab10f0f5b92e0bc741c82fe6adeb4bb828a74ae6",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/testdata/search_pagination_golden.json",
+      "source_blob": "062e3baeb92acabc25f9898327d76d3755235c2e",
+      "source_last_change": "2ee7226bbe89751a5083f0f6682463a704942754",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/testdata/search_pagination_golden.json",
+      "destination": "workers/mb/testdata/search_pagination_golden.json",
+      "destination_sha256": "850a40c54ff1c7e3e2541de2fb7c5c095678641e8a71b36b4934fbabaedb0f40",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/cache_dto_compatibility_acceptance.rs",
+      "source_blob": "f83a27f764623fdbb455ea4433c424898954a865",
+      "source_last_change": "9b034604bad8c489ee71effa7544132fe5017dfe",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/cache_dto_compatibility_acceptance.rs",
+      "destination": "workers/mb/tests/cache_dto_compatibility_acceptance.rs",
+      "destination_sha256": "3fc2d58bf2953af770d29d1431af70256f1a0e53315df4a6b5e12e729af6c14f",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/cache_payload_boundary_acceptance.rs",
+      "source_blob": "f178895638e6786dd1e74fe13885bac1217bae8e",
+      "source_last_change": "1ab67237b9c3fa706f2699d2dcbadf2fcee49f4f",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/cache_payload_boundary_acceptance.rs",
+      "destination": "workers/mb/tests/cache_payload_boundary_acceptance.rs",
+      "destination_sha256": "cb41fc8e1fda2c9bee064424db97f55a93d647b68765417e32a7b80208052eaa",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/cache_payload_validation.rs",
+      "source_blob": "e8e24fff2af102cb69d6ed78c96e548f8e8db154",
+      "source_last_change": "e6c4bfca6c58a75e0882c20444d7844c1e79cb5a",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/cache_payload_validation.rs",
+      "destination": "workers/mb/tests/cache_payload_validation.rs",
+      "destination_sha256": "712cef753b4b9952dab44abfc7fe98854efb14474510be1488cfc3b69245cf69",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/canonical_edge_cache_acceptance.rs",
+      "source_blob": "def200a8b9894a6fd4f1a4d6c0d1a10a4b3ae8a3",
+      "source_last_change": "d2e2d4c684172486279129a289b7e0ad4c2577ef",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/canonical_edge_cache_acceptance.rs",
+      "destination": "workers/mb/tests/canonical_edge_cache_acceptance.rs",
+      "destination_sha256": "11d1fa2a7525fa23338ca78e369a11a47906562e309f3d341fba067382bde45a",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/canonical_edge_url_vectors.rs",
+      "source_blob": "742dba1eff6badec94dd711367867539f990f86e",
+      "source_last_change": "d2e2d4c684172486279129a289b7e0ad4c2577ef",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/canonical_edge_url_vectors.rs",
+      "destination": "workers/mb/tests/canonical_edge_url_vectors.rs",
+      "destination_sha256": "f399791da8a943667792db1b1d3048c51b5c37e4b50ae91032c4cc711f9ac54d",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/cover_art_env.rs",
+      "source_blob": "7bba37c72439069d9385fd7f8da3bc9bb89bf4ec",
+      "source_last_change": "dbb5f850a6e5608ad61d80d955d80e94430ec850",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/cover_art_env.rs",
+      "destination": "workers/mb/tests/cover_art_env.rs",
+      "destination_sha256": "4f598d2be58494906b2cd10a5151480cd93efb53d8b4be1909e86bf812e4bb74",
+      "adaptations": [
+        "Replace source resource names with unprovisioned example bucket names; retain environment-boundary assertions.",
+        "Retain every assertion; production example now pins a separate bucket instead of reproducing source deployment drift."
+      ]
+    },
+    {
+      "source_path": "workers/mb/tests/db_deadline_stage_acceptance.rs",
+      "source_blob": "ebaf5d69b7ca2c9059ae18172c694e9df6e0f760",
+      "source_last_change": "e6c4bfca6c58a75e0882c20444d7844c1e79cb5a",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/db_deadline_stage_acceptance.rs",
+      "destination": "workers/mb/tests/db_deadline_stage_acceptance.rs",
+      "destination_sha256": "48da2e2d5db7e89d62d42476e3dddd7143498a415cc95567614baf3482fac4c1",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/db_deadline_stage_wiring_acceptance.rs",
+      "source_blob": "c5d58690e743591b8ff00586be7c4b833b702b49",
+      "source_last_change": "e6c4bfca6c58a75e0882c20444d7844c1e79cb5a",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/db_deadline_stage_wiring_acceptance.rs",
+      "destination": "workers/mb/tests/db_deadline_stage_wiring_acceptance.rs",
+      "destination_sha256": "086bf35966a7e1446f53189d951b5a082a2998043b8ca11b81d959d073c806e2",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/fixtures/logging_golden.json",
+      "source_blob": "85613e5f92d9866151f1d0ac094215e04956b4cd",
+      "source_last_change": "c95cec6b3d56bae04e36b5223af1791f99fe116f",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/fixtures/logging_golden.json",
+      "destination": "workers/mb/tests/fixtures/logging_golden.json",
+      "destination_sha256": "ea44824d6fd19f2b8cc4424ebc5beb9c48391457fd62bafd93f0d3f5127b059e",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/logging_standard.rs",
+      "source_blob": "4ec375aaca67d0ade45bf89208dd58180489c482",
+      "source_last_change": "30dc8567e477c48c7b13b2df309364cb2b87e12f",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/logging_standard.rs",
+      "destination": "workers/mb/tests/logging_standard.rs",
+      "destination_sha256": "0277d40ae4ecd70409768d888498236b0f93674657fa9ae83733ce9da196ecec",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/lookup_cache_validation.rs",
+      "source_blob": "bf4c7728f84a9756b54919509424a9952ce6e164",
+      "source_last_change": "e6c4bfca6c58a75e0882c20444d7844c1e79cb5a",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/lookup_cache_validation.rs",
+      "destination": "workers/mb/tests/lookup_cache_validation.rs",
+      "destination_sha256": "b8be14e1cb3210fed590f7d00e7b25a984ee3df881e581c90f869a7ed3f57f3a",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/packet_id_conflict_guarantees.rs",
+      "source_blob": "6c1939c6be2da8a06c97c88aa118cfa342cd4ea8",
+      "source_last_change": "1bebdc641cfbceae83f2d15c6ceb105d538f0612",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/packet_id_conflict_guarantees.rs",
+      "destination": "workers/mb/tests/packet_id_conflict_guarantees.rs",
+      "destination_sha256": "2bcda2cfb4eefd375356ef1f177d648dfdcd46b67b5e7c2553e1be9558ed7c54",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/packet_id_conflicts.rs",
+      "source_blob": "0a867d4f30b20899107e033312a7ee11eb0981b7",
+      "source_last_change": "1bebdc641cfbceae83f2d15c6ceb105d538f0612",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/packet_id_conflicts.rs",
+      "destination": "workers/mb/tests/packet_id_conflicts.rs",
+      "destination_sha256": "71181e98f05f2f941a66454d3245dd0a0b9435b0ec2b585c74ec279637005ce6",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/query_length_boundary_acceptance.rs",
+      "source_blob": "fda155b30719ba837cbf3e7f49e13a9b8af305b4",
+      "source_last_change": "507e57e12497e0552bf9782a8075c31562f868cf",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/query_length_boundary_acceptance.rs",
+      "destination": "workers/mb/tests/query_length_boundary_acceptance.rs",
+      "destination_sha256": "2c9047f3add29f42b0e28feb3b9e853cf3de24cfbee8e19ba742d1e6caa22e5e",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/release_recordings_cap_acceptance.rs",
+      "source_blob": "9abc770c6d4f76f0fe7caec1a9e2aa2debc09775",
+      "source_last_change": "6a9bf3c740ed10fc62f3341d676850f4be8fe9c2",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/release_recordings_cap_acceptance.rs",
+      "destination": "workers/mb/tests/release_recordings_cap_acceptance.rs",
+      "destination_sha256": "714e3f64b5206f98e02f7b0dd2830554c21c5a3d408bbabcac22429a0780c0c2",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/replication_cap_interaction.rs",
+      "source_blob": "d785d7e8ff6a0d68cca2bfb5fe881c8917428eaa",
+      "source_last_change": "1baa7b912664c14aa5c9a1f01d657fc1a02a330c",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/replication_cap_interaction.rs",
+      "destination": "workers/mb/tests/replication_cap_interaction.rs",
+      "destination_sha256": "c717c116def6bd2f13bd4424ad9d6c52ab9cc72209201d46fe9597006ca6c6a8",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/replication_lag_acceptance.rs",
+      "source_blob": "210eb0683cb53790976274f3ee6b6c457d0704c3",
+      "source_last_change": "1ef120da1869e7d90ea113674a32227dd51f7ce2",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/replication_lag_acceptance.rs",
+      "destination": "workers/mb/tests/replication_lag_acceptance.rs",
+      "destination_sha256": "2f62fe7a5416f679a2e91cdce7ef03c0347221e2ba5451822437fb3b9bd83f94",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/replication_ledger_replay.rs",
+      "source_blob": "098141ad6deda65a8ba0cf392c09d0d9cf9f1a32",
+      "source_last_change": "56df50a5f4f1b96cc87b53951bcb64544ec3fdfe",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/replication_ledger_replay.rs",
+      "destination": "workers/mb/tests/replication_ledger_replay.rs",
+      "destination_sha256": "2a87131a6e325fee5022ac01e78352604969ff856f667e6f55ae5b96c7d2638d",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/replication_sequence_max_acceptance.rs",
+      "source_blob": "149243b383b18a70e34cbfcd0265a9c708f802ab",
+      "source_last_change": "bd4d442b22df254093488b72d9f1d335702d63bf",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/replication_sequence_max_acceptance.rs",
+      "destination": "workers/mb/tests/replication_sequence_max_acceptance.rs",
+      "destination_sha256": "b5c4bbd315e6bc4bbdfaf7768d439c8d88855b9639cf4afceef1d0075bdd8606",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/search_validation.rs",
+      "source_blob": "7cce02f067046950ad58fc541aeeed4c95d78dcb",
+      "source_last_change": "82c7a93010975a98f17fc1763c7c3f67b8ee3baf",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/search_validation.rs",
+      "destination": "workers/mb/tests/search_validation.rs",
+      "destination_sha256": "9f931ee37579159e60237d9a39c1cfb4bb0ce05fff3c7d0682544a7ed29fad0d",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/trace_propagation_acceptance.rs",
+      "source_blob": "57b98381f46375eb594afc3018b4f35e348556f4",
+      "source_last_change": "0a3e904caf9400b13a97fb5aee474db3701d3c0e",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/trace_propagation_acceptance.rs",
+      "destination": "workers/mb/tests/trace_propagation_acceptance.rs",
+      "destination_sha256": "cdb70683a5cde9fa75fd8d0d351c272fc9c6cbf6832e5f5df2a162b9f3609385",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/w6b_reads_acceptance.rs",
+      "source_blob": "18e3b854bc91690f89d13bb93986300b90a99451",
+      "source_last_change": "fe93464a9ae37d4455945a41fca596cc2506d2a9",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/w6b_reads_acceptance.rs",
+      "destination": "workers/mb/tests/w6b_reads_acceptance.rs",
+      "destination_sha256": "96fd4ff823eaee43a02eda5ffaf9b81d8d8d89a8353af9a327660e422413faef",
+      "adaptations": []
+    },
+    {
+      "source_path": "workers/mb/tests/wrangler_workers_dev_off.rs",
+      "source_blob": "5e44ef17c697ebb5aa47957024199bd0e7040c33",
+      "source_last_change": "dbb5f850a6e5608ad61d80d955d80e94430ec850",
+      "contribution_history": "https://github.com/TogetherWeOwn/nntunev2/commits/3ecdd743b26c0881ac17520883aab717fb813ec6/workers/mb/tests/wrangler_workers_dev_off.rs",
+      "destination": "workers/mb/tests/wrangler_workers_dev_off.rs",
+      "destination_sha256": "2e1ee04e3a0a9b1aedbce69f292f4642c8c8faaee2c347dc650da4d0ebc6fe2e",
+      "adaptations": []
+    },
+    {
+      "source_path": "docs/logging-standard.md",
+      "source_blob": "a2c36cd6f055c9758ee23d58c88e14a35981ae3f",
+      "destination": "docs/logging-standard.md",
+      "adaptations": [
+        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
+      ]
+    },
+    {
+      "source_path": "docs/api-errors.md",
+      "source_blob": "46faaec5b334712498db37c30fdbe4e266c58fab",
+      "destination": "docs/api-errors.md",
+      "adaptations": [
+        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
+      ]
+    },
+    {
+      "source_path": "workers/mb/README.md",
+      "source_blob": "ce3bbd49c56257e23d52810d4826658bde26c70e",
+      "destination": "workers/mb/README.md",
+      "adaptations": [
+        "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
+      ]
+    }
+  ]
+}

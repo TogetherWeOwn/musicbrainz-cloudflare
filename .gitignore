@@ -1,0 +1,10 @@
+/target/
+**/build/
+.claude/
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.log
+__pycache__/

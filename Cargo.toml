@@ -1,0 +1,8 @@
+[workspace]
+members = ["workers/mb", "crates/nntune-logging"]
+resolver = "2"
+
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1

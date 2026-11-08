@@ -1,0 +1,132 @@
+# Adapted from the org starter at 20d95fd8c249c7192c364f8b41519fca3fc873df.
+# No deployment, live service or production secret is used by this workflow.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group: {}
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    uses: TogetherWeOwn/.github/.github/workflows/changes.yml@773ee91a904b9e1b65eddaaad4400d36e05fa717
+    with:
+      areas-json: '{"rust":["workers/mb/**","crates/nntune-logging/**"],"docs":["*.md","docs/**"]}'
+      full-run-globs-json: '["Cargo.toml","**/Cargo.toml","Cargo.lock","**/Cargo.lock",".cargo/**","**/.cargo/**","rust-toolchain*","**/rust-toolchain*",".github/**","provenance/**"]'
+      docs-areas-json: '["docs"]'
+
+  rust:
+    name: Rust native and Wasm
+    needs: [changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.full_run == 'true' || (fromJSON(needs.changes.outputs.areas).rust && github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install minimal Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --component rustfmt,clippy --target wasm32-unknown-unknown
+          rustup default stable
+          rustc --version
+          cargo --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Fetch exact locked dependencies
+        run: cargo fetch --locked
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Native worker and logging assertions
+        run: cargo test --locked --workspace --all-targets
+      - name: Strict lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Build actual Worker Wasm
+        run: |
+          cargo build --locked -p nntune-mb --target wasm32-unknown-unknown --release
+          test -s target/wasm32-unknown-unknown/release/nntune_mb.wasm
+      - name: Reject lock drift
+        run: git diff --exit-code -- Cargo.lock
+
+  lint:
+    name: Export and workflow guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Public payload and provenance
+        run: |
+          python3 -I .github/scripts/test_check_export.py
+          python3 -I .github/scripts/check_export.py
+      - name: Lint Actions workflows
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d "$RUNNER_TEMP/workflow-lint.XXXXXX")"
+          curl -fsSL -o "$tools/actionlint.tgz" https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          printf '%s  %s\n' 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757 "$tools/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$tools/actionlint.tgz" -C "$tools" actionlint
+          "$tools/actionlint" -shellcheck= -pyflakes=
+          curl -fsSL -o "$tools/zizmor.tgz" https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          printf '%s  %s\n' bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b "$tools/zizmor.tgz" | sha256sum -c -
+          tar -xzf "$tools/zizmor.tgz" -C "$tools"
+          "$tools/zizmor" --offline .github/workflows
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan full history with the free pinned binary
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d "$RUNNER_TEMP/secret-scan.XXXXXX")"
+          curl -fsSL -o "$tools/gitleaks.tgz" https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$tools/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$tools/gitleaks.tgz" -C "$tools" gitleaks
+          "$tools/gitleaks" git --redact --exit-code 1
+
+  ci-ok:
+    name: ci-ok
+    needs: [changes, rust, lint, gitleaks]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          bad = {key: job["result"] for key, job in needs.items()
+                 if job["result"] != "success" and not
+                 (key == "rust" and job["result"] == "skipped" and
+                  needs["changes"]["result"] == "success")}
+          if bad:
+              print(f"failing jobs: {bad}")
+              sys.exit(1)
+          print("ci-ok: selected real checks succeeded")
+          PY

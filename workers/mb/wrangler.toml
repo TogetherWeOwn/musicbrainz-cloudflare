@@ -1,0 +1,52 @@
+# UNCONFIGURED EXAMPLE ONLY. Never deploy this file as-is.
+# No resource IDs, public routes or automatic installer/build hooks.
+# Build the Rust/Wasm artifact in Actions; actual runtime packaging and
+# binding ownership require a separately reviewed deployment change.
+name = "musicbrainz-unconfigured"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-10-01"
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "unconfigured"
+
+[env.staging]
+name = "musicbrainz-example-staging"
+workers_dev = false
+preview_urls = false
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[[env.staging.hyperdrive]]
+binding = "MB_DB"
+id = "UNCONFIGURED"
+
+[[env.staging.kv_namespaces]]
+binding = "MB_CACHE"
+id = "UNCONFIGURED"
+
+[[env.staging.r2_buckets]]
+binding = "ART_CACHE"
+bucket_name = "musicbrainz-example-art-staging"
+
+[env.production]
+name = "musicbrainz-example-production"
+workers_dev = false
+preview_urls = false
+
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[[env.production.hyperdrive]]
+binding = "MB_DB"
+id = "UNCONFIGURED"
+
+[[env.production.kv_namespaces]]
+binding = "MB_CACHE"
+id = "UNCONFIGURED"
+
+[[env.production.r2_buckets]]
+binding = "ART_CACHE"
+bucket_name = "musicbrainz-example-art-prod"

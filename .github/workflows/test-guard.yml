@@ -1,0 +1,34 @@
+name: test-guard
+
+# TogetherWeOwn SDLC standard, one-click template for active repos.
+# Calls the org reusable test-guard gate (Builder must not modify
+# acceptance tests written by the Test Author). Lands in warn mode:
+# it reports but never fails. Per-repo overrides go in
+# `.github/test-guard.json` (see TEST-GUARD.md in the .github repo).
+# Replace 20d95fd8c249c7192c364f8b41519fca3fc873df with the merge SHA of the reusable workflow,
+# then repin the same way on later updates — never a moving tag.
+# Do NOT add this check to any ruleset until the repo flips to enforce.
+
+on:
+  # labeled/unlabeled: the marker label is usually set after the PR
+  # exists; without these the gate never re-evaluates a fresh label.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  # Merge queue validation: `test-guard` is a required check, so it must
+  # report on merge_group (cf. test-guard-required.yml wrapper).
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read # marker-label actor audit via the issue-events API
+
+concurrency:
+  group: test-guard-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Keep id and name byte-identical: a future org ruleset requires `test-guard`.
+  test-guard:
+    name: test-guard
+    uses: TogetherWeOwn/.github/.github/workflows/test-guard.yml@20d95fd8c249c7192c364f8b41519fca3fc873df
+    # Runs on GitHub-hosted ubuntu-latest for public and private repos.

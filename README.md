@@ -1,14 +1,41 @@
 # musicbrainz-cloudflare
 
-A Cloudflare-native MusicBrainz data service with a MusicBrainz WS/2-compatible API.
+Foundation for a Cloudflare-native MusicBrainz data service. This repository
+contains a clean, pinned export of the legacy read Worker and its structured
+logging dependency. It does **not yet implement the official WS/2 API**.
 
-- Serves MusicBrainz data from our own storage on Cloudflare Workers; it does not run the MusicBrainz server.
-- Phase 1 covers the endpoints NNTune needs, using the official WS/2 request paths, parameters and response format.
-- Long-term goal: full WS/2 mirror parity, so any client configured for a MusicBrainz mirror can use it.
-- Only CC0 core data is ingested by default. Data under other licences (for example CC BY-NC-SA derived tables and the Live Data Feed) stays disabled unless the required MetaBrainz licence is in place.
+## Workspace
 
-MusicBrainz is a trademark of the MetaBrainz Foundation. This project is not affiliated with or endorsed by MetaBrainz.
+- [`workers/mb`](workers/mb/README.md): legacy `/v1/mb` read API, native tests,
+  and an opt-in R2 snapshot experiment.
+- [`crates/nntune-logging`](crates/nntune-logging/README.md): log envelope,
+  build identity, trace propagation and redaction contracts.
+- [`provenance`](provenance/README.md): source revision, file/blob mappings,
+  contribution history, fixture provenance and retained-source obligations.
+- [`docs/ops.md`](docs/ops.md): unconfigured bindings, backend limits and
+  on-demand, zero-idle-cost preview requirements.
 
-## License
+The intended next API subset is release search, release/media hydration,
+artist lookup and recording lookup using official WS/2 JSON contracts.
+Existing custom responses and relevance scores are not WS/2 equivalents.
+Full mirror/XML and client drop-in compatibility are not claimed.
 
-MIT. See [LICENSE](LICENSE).
+## Verification
+
+Full suites, lint and native/Wasm builds run on GitHub Actions. See
+[CONTRIBUTING.md](CONTRIBUTING.md). No database, Cloudflare account, live
+MusicBrainz feed or dump is needed by the synthetic test suite. No deploy
+workflow or resource activation is included.
+
+## Data and rights
+
+Software is [MIT](LICENSE); see [NOTICE](NOTICE). MusicBrainz core data is
+CC0, independently of the software licence. No live dump, supplementary
+data, hourly feed, cover-art bytes or customer records are exported here.
+Supplementary/hourly licensing and refresh requirements are separate future
+work, not removed or satisfied by this package. No account or token is
+requested by this foundation. MLHD+ is excluded. Linked artwork and video
+remain subject to their own rights; a URL is not a redistribution licence.
+
+MusicBrainz is a trademark of the MetaBrainz Foundation. This project is not
+affiliated with or endorsed by MetaBrainz.
