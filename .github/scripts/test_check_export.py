@@ -38,6 +38,25 @@ class ExportGuardTests(unittest.TestCase):
             source.unlink()
             self.assertTrue(guard.provenance_errors(root, manifest))
 
+    def test_missing_or_invalid_export_digest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "rewritten.md"
+            source.write_bytes(b"standalone documentation")
+            record = {"source_blob": "a" * 40, "destination": "rewritten.md"}
+            manifest = {"source_revision": guard.SOURCE_REVISION, "files": [record]}
+            for digest in [None, "", "not-a-digest", "a" * 63, "A" * 64, 123]:
+                with self.subTest(digest=digest):
+                    if digest is None:
+                        record.pop("destination_sha256", None)
+                    else:
+                        record["destination_sha256"] = digest
+                    self.assertTrue(guard.provenance_errors(root, manifest))
+            record["destination_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+            self.assertEqual(guard.provenance_errors(root, manifest), [])
+            source.write_bytes(b"unrecorded documentation edit")
+            self.assertTrue(guard.provenance_errors(root, manifest))
+
     def test_config_rejects_public_surface_and_usable_ids(self):
         safe = {"workers_dev": False, "preview_urls": False,
                 "kv_namespaces": [{"id": "UNCONFIGURED"}]}

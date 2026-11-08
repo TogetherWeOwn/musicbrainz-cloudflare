@@ -350,6 +350,7 @@
       "source_path": "docs/logging-standard.md",
       "source_blob": "a2c36cd6f055c9758ee23d58c88e14a35981ae3f",
       "destination": "docs/logging-standard.md",
+      "destination_sha256": "0adc0fb9e2af6a3a182e316a824d4698fce59a187c50868b340eedf9cdf990e3",
       "adaptations": [
         "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
       ]
@@ -358,6 +359,7 @@
       "source_path": "docs/api-errors.md",
       "source_blob": "46faaec5b334712498db37c30fdbe4e266c58fab",
       "destination": "docs/api-errors.md",
+      "destination_sha256": "24b9bf0c08c934019765125871e5f2adb9f9c52a9fca18ac9c5825ec3f8f918c",
       "adaptations": [
         "Rewritten standalone documentation; source contracts retained; resource and cross-product deployment inventory not copied."
       ]

@@ -41,7 +41,9 @@ def provenance_errors(root, manifest):
             errors.append(f"missing/non-regular export: {relative}")
             continue
         expected = record.get("destination_sha256")
-        if expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            errors.append(f"missing/invalid export digest: {relative}")
+        elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             errors.append(f"export digest drift: {relative}")
         if not re.fullmatch(r"[0-9a-f]{40}", record["source_blob"]):
             errors.append(f"invalid source blob: {relative}")
