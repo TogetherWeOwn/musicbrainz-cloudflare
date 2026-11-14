@@ -1,0 +1,11 @@
+# Highest matching tier wins; unmatched paths are sensitive. For renames,
+# classify both the old and new paths. Content triggers can always escalate
+# a change, including changes to allowlisted prose.
+version: 1
+default_tier: sensitive
+tiers:
+  low:
+    - README.md
+  ordinary: []
+  sensitive:
+    - .github/review-tiers.yml
