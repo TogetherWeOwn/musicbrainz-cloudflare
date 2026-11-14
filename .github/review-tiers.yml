@@ -3,8 +3,9 @@
 # sensitive for changes involving endpoints or input parsing; auth, sessions,
 # crypto, keys, secrets, credentials or permissions; tenant or personal data;
 # SQL, schema or migrations; dependencies or lockfiles (including dev deps);
-# CI or workflows; or weakened/deleted tests, assertions or review gates.
-# Inert prose and test names do not exempt content from these triggers.
+# CI or workflows; policy, licensing or data-acquisition commitments; or
+# weakened/deleted tests, assertions or review gates. Inert prose and test
+# names do not exempt content from these triggers.
 version: 1
 default_tier: sensitive
 tiers:
